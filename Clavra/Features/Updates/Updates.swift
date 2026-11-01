@@ -4,11 +4,24 @@ import Sparkle
 /// Updates in place with Sparkle: once a day it looks at the appcast on GitHub, and when there's a
 /// newer build it asks, downloads, checks the EdDSA signature against the key in Info.plist, swaps
 /// the app and relaunches. The signing certificate stays the same, so the Keychain keeps trusting it.
-@MainActor
-final class Updates: NSObject {
+@MainActor @Observable
+final class Updates: NSObject, SPUUpdaterDelegate {
     static let shared = Updates()
 
-    private var controller: SPUStandardUpdaterController?
+    /// A newer version the last check found; the sidebar offers it.
+    private(set) var available: String?
+    private(set) var lastChecked: Date?
+    /// Sparkle said this is the newest version, during this run.
+    private(set) var confirmedLatest = false
+
+    static var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let short = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
+    }
+
+    @ObservationIgnored private var controller: SPUStandardUpdaterController?
     #if DEBUG
     private var testUpdater: SPUUpdater?
     private let testDriver = TestDriver()
@@ -26,11 +39,30 @@ final class Updates: NSObject {
             return
         }
         #endif
-        controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        lastChecked = controller?.updater.lastUpdateCheckDate
     }
 
     func checkNow() {
         controller?.checkForUpdates(nil)
+    }
+
+    // MARK: SPUUpdaterDelegate
+
+    nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        let version = item.displayVersionString
+        MainActor.assumeIsolated {
+            available = version
+            lastChecked = .now
+        }
+    }
+
+    nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        MainActor.assumeIsolated {
+            available = nil
+            confirmedLatest = true
+            lastChecked = .now
+        }
     }
 
     var checksAutomatically: Bool {

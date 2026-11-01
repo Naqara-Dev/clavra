@@ -150,6 +150,11 @@ struct RootView: View {
     private func debugLaunch() {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "ClavraNewHost") { model.newHost() }
+        // `-ClavraSettings about` opens Settings on that tab.
+        if let tab = UserDefaults.standard.string(forKey: "ClavraSettings") {
+            UserDefaults.standard.set(tab, forKey: "SettingsTab")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
+        }
         // `-ClavraWindow 1440x880` sizes the window, for screenshots.
         if let size = UserDefaults.standard.string(forKey: "ClavraWindow")?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
             DispatchQueue.main.async {

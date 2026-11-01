@@ -4,12 +4,15 @@ import UniformTypeIdentifiers
 /// ⌘, : the few things that are yours to choose.
 struct SettingsView: View {
     var model: AppModel
+    /// Which tab is open; the sidebar's update note opens About.
+    @AppStorage("SettingsTab") private var tab = "general"
 
     var body: some View {
-        TabView {
-            GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }
-            TerminalSettings(model: model).tabItem { Label("Terminal", systemImage: "terminal") }
-            TrustedHosts().tabItem { Label("Trusted Hosts", systemImage: "checkmark.shield") }
+        TabView(selection: $tab) {
+            GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            TerminalSettings(model: model).tabItem { Label("Terminal", systemImage: "terminal") }.tag("terminal")
+            TrustedHosts().tabItem { Label("Trusted Hosts", systemImage: "checkmark.shield") }.tag("hosts")
+            AboutSettings().tabItem { Label("About", systemImage: "info.circle") }.tag("about")
         }
         .frame(width: 520)
     }
@@ -21,7 +24,6 @@ private struct GeneralSettings: View {
     @State private var check = HealthMonitor.isEnabled
     @State private var restore = AppModel.restoresTabs
     @AppStorage("MenuBarExtra") private var menuBar = true
-    @State private var updates = Updates.shared.checksAutomatically
     @State private var note: String?
 
     var body: some View {
@@ -47,9 +49,6 @@ private struct GeneralSettings: View {
             setting("Show Clavra in the menu bar", isOn: $menuBar,
                     note: "Every saved host, one click away, even with the window closed.")
 
-            setting("Check for updates every day", isOn: $updates,
-                    note: "Clavra asks before installing anything. Updates are checked against Naqara Dev's signing key, so a tampered download is refused.")
-                .onChange(of: updates) { Updates.shared.checksAutomatically = updates }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Backup").font(.system(size: 13, weight: .medium))
@@ -156,6 +155,49 @@ private struct TrustedHosts: View {
         }
         .padding(24)
         .onAppear { list = KnownHosts.trusted() }
+    }
+}
+
+/// The version, updates, and where Clavra comes from.
+private struct AboutSettings: View {
+    @State private var automatic = Updates.shared.checksAutomatically
+    private var updates: Updates { Updates.shared }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 16) {
+                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 64, height: 64)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Clavra").font(.system(size: 20, weight: .semibold))
+                    Text("Version \(Updates.version)").font(.system(size: 12.5)).foregroundStyle(Theme.secondary).textSelection(.enabled)
+                    Text("An SSH client by Naqara Dev.").font(.system(size: 12.5)).foregroundStyle(Theme.tertiary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Button(updates.available.map { "Update to \($0)…" } ?? "Check for Updates…") { updates.checkNow() }
+                    if let version = updates.available {
+                        Text("Version \(version) is ready").font(.system(size: 12)).foregroundStyle(Theme.brass)
+                    } else if updates.confirmedLatest {
+                        Text("You have the latest version").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    } else if let checked = updates.lastChecked {
+                        Text("Last checked \(checked.formatted(.relative(presentation: .named)))").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    }
+                }
+                setting("Check for updates every day", isOn: $automatic,
+                        note: "Clavra asks before installing anything. Each update is checked against Naqara Dev's signing key, so a tampered download is refused.")
+                    .onChange(of: automatic) { updates.checksAutomatically = automatic }
+            }
+
+            HStack(spacing: 16) {
+                Link("clavra.naqara.dev", destination: URL(string: "https://clavra.naqara.dev")!)
+                Link("Source on GitHub", destination: URL(string: "https://github.com/Naqara-Dev/clavra")!)
+                Link("Report an issue", destination: URL(string: "https://github.com/Naqara-Dev/clavra/issues")!)
+            }
+            .font(.system(size: 12.5))
+        }
+        .padding(24)
     }
 }
 

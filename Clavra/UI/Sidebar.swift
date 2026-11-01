@@ -8,13 +8,28 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 34)
 
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
-                TextField("Search hosts", text: $query).textFieldStyle(.plain).font(.system(size: 13))
+            // Find a host, or add one.
+            HStack(spacing: 6) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
+                    TextField("Search hosts", text: $query).textFieldStyle(.plain).font(.system(size: 13))
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
+
+                Menu {
+                    Button("New Host…") { model.newHost() }
+                    Button("Import from ~/.ssh/config") { model.store.importSSHConfig() }
+                } label: {
+                    Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary)
+                        .frame(width: 30, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .help("New host or import (⌘N)")
             }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
 
@@ -32,45 +47,79 @@ struct Sidebar: View {
                         }
                     }
                     if model.store.hosts.isEmpty {
-                        Text("Hosts you save show up here.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.tertiary)
-                            .padding(10)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Hosts you save show up here.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.tertiary)
+                            Button("Import ~/.ssh/config") { model.store.importSSHConfig() }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.brass)
+                        }
+                        .padding(10)
                     }
                 }
                 .padding(.horizontal, 8)
             }
             .scrollIndicators(.never)
 
-            Rectangle().fill(Theme.line).frame(height: 1)
-            VStack(alignment: .leading, spacing: 2) {
-                footerButton("Snippets", icon: "text.insert", isOn: isShowing(.snippets)) { model.show(.snippets) }
-                footerButton("Keys", icon: "key", isOn: isShowing(.keys)) { model.show(.keys) }
-                footerButton(model.remote.isOn ? "Phone access on" : "Phone Access", icon: "iphone", isOn: isShowing(.remote)) { model.show(.remote) }
-                footerButton("New Host", icon: "plus") { model.newHost() }
-                footerButton("Import ~/.ssh/config", icon: "square.and.arrow.down") { model.store.importSSHConfig() }
+            if let version = Updates.shared.available {
+                Button { Updates.shared.checkNow() } label: {
+                    Label("Clavra \(version) is ready", systemImage: "arrow.down.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.brass)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.brass.opacity(0.12)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Download and install Clavra \(version)")
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
             }
-            .padding(8)
+
+            // The places that aren't hosts: one quiet row of icons.
+            Rectangle().fill(Theme.line).frame(height: 1)
+            HStack(spacing: 4) {
+                place("text.insert", help: "Snippets", page: .snippets)
+                place("key", help: "Keys", page: .keys)
+                place("iphone", help: model.remote.isOn ? "Phone Access is on" : "Phone Access", page: .remote, dot: model.remote.isOn)
+                Spacer(minLength: 0)
+                SettingsLink {
+                    Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                        .frame(width: 34, height: 30).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
+                .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("general", forKey: "SettingsTab") })
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 44)
         }
         .frame(width: 236)
         .background(Theme.sidebar)
     }
 
-    private func isShowing(_ page: AppModel.Page) -> Bool { model.selection == nil && model.page == page }
-
-    private func footerButton(_ title: String, icon: String, isOn: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 12.5))
-                .foregroundStyle(isOn ? Theme.ink : Theme.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .frame(height: 28)
+    /// One icon in the bottom row; the page it opens is lifted onto a card while it's showing.
+    private func place(_ icon: String, help: String, page: AppModel.Page, dot: Bool = false) -> some View {
+        let isOn = isShowing(page)
+        return Button { model.show(page) } label: {
+            Image(systemName: icon).font(.system(size: 13)).foregroundStyle(isOn ? Theme.ink : Theme.secondary)
+                .frame(width: 34, height: 30)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(isOn ? Theme.card : .clear))
+                .overlay(alignment: .topTrailing) {
+                    if dot { Circle().fill(Theme.color(for: .personal)).frame(width: 6, height: 6).padding(6) }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(help)
     }
+
+    private func isShowing(_ page: AppModel.Page) -> Bool { model.selection == nil && model.page == page }
+
 }
 
 private struct HostRow: View {
