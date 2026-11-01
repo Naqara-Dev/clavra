@@ -1,0 +1,96 @@
+import Citadel
+import Crypto
+import Foundation
+import NIOCore
+import NIOSSH
+
+enum ClavraError: LocalizedError {
+    case noKey
+    case unreadableKey(String)
+    case unsupportedKey(String)
+    case needsPassphrase
+    case noPassword
+    case hostKeyRejected
+
+    var errorDescription: String? {
+        switch self {
+        case .noKey: "No private key found in ~/.ssh. Choose one in the host's settings."
+        case .unreadableKey(let path): "Couldn't read the key at \(path)."
+        case .unsupportedKey(let type): "\(type) keys aren't supported yet. Use an ed25519 or RSA key."
+        case .needsPassphrase: "This key is protected by a passphrase. Add it in the host's settings."
+        case .noPassword: "No password saved for this host. Add it in the host's settings."
+        case .hostKeyRejected: "You didn't trust the server's key, so Clavra didn't connect."
+        }
+    }
+}
+
+/// Turns a host's saved settings into what Citadel needs to log in.
+enum Credentials {
+    static let defaultKeys = ["~/.ssh/id_ed25519", "~/.ssh/id_rsa"]
+
+    static func expand(_ path: String) -> String { (path as NSString).expandingTildeInPath }
+
+    /// Private keys in ~/.ssh, by the header in their first line.
+    static func keysInSSHFolder() -> [String] {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".ssh")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.sorted().compactMap { name in
+            guard !name.hasSuffix(".pub"), !name.hasPrefix("known_hosts"), name != "config",
+                  let handle = FileHandle(forReadingAtPath: folder.appending(path: name).path) else { return nil }
+            defer { try? handle.close() }
+            let head = String(decoding: handle.readData(ofLength: 40), as: UTF8.self)
+            return head.hasPrefix("-----BEGIN") && head.contains("PRIVATE KEY") ? "~/.ssh/\(name)" : nil
+        }
+    }
+
+    static func method(for server: Server) throws -> SSHAuthenticationMethod {
+        switch server.auth {
+        case .password:
+            guard let password = Keychain.password(for: server.id) else { throw ClavraError.noPassword }
+            return .passwordBased(username: server.user, password: password)
+        case .key:
+            let path = server.keyPath ?? defaultKeys.first { FileManager.default.fileExists(atPath: expand($0)) }
+            guard let path else { throw ClavraError.noKey }
+            guard let text = try? String(contentsOfFile: expand(path), encoding: .utf8) else { throw ClavraError.unreadableKey(path) }
+            let passphrase = Keychain.passphrase(for: server.id).map { Data($0.utf8) }
+            do {
+                let type = try SSHKeyDetection.detectPrivateKeyType(from: text)
+                switch type {
+                case .ed25519:
+                    return .ed25519(username: server.user, privateKey: try Curve25519.Signing.PrivateKey(sshEd25519: text, decryptionKey: passphrase))
+                case .rsa:
+                    return .rsa(username: server.user, privateKey: try Insecure.RSA.PrivateKey(sshRsa: text, decryptionKey: passphrase))
+                default:
+                    throw ClavraError.unsupportedKey(type.description)
+                }
+            } catch let error as ClavraError {
+                throw error
+            } catch {
+                throw passphrase == nil && text.contains("aes256") ? ClavraError.needsPassphrase : error
+            }
+        }
+    }
+}
+
+/// Asks the session whether to trust the server's key. NIO calls in on its event loop; the answer
+/// can take as long as the user needs.
+/// The key reaches the session as OpenSSH text (`ssh-ed25519 AAAA…`), which crosses actors safely.
+final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, Sendable {
+    private let decide: @Sendable (String) async -> Bool
+
+    init(_ decide: @escaping @Sendable (String) async -> Bool) {
+        self.decide = decide
+    }
+
+    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let key = String(openSSHPublicKey: hostKey)
+        let decide = decide
+        Task {
+            if await decide(key) {
+                validationCompletePromise.succeed(())
+            } else {
+                validationCompletePromise.fail(ClavraError.hostKeyRejected)
+            }
+        }
+    }
+}
