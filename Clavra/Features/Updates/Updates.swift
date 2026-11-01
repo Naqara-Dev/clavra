@@ -39,12 +39,26 @@ final class Updates: NSObject, SPUUpdaterDelegate {
             return
         }
         #endif
+        Self.forgetCachedFeed()
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
         lastChecked = controller?.updater.lastUpdateCheckDate
     }
 
     func checkNow() {
+        Self.forgetCachedFeed()
         controller?.checkForUpdates(nil)
+    }
+
+    /// Sparkle fetches the feed through the app's shared URL cache, which can hand back a copy of
+    /// an older appcast for a while after a release (0.4.0 kept saying it was the newest). Clavra
+    /// loads nothing else over HTTP worth caching, so the cache is emptied before every check.
+    private static func forgetCachedFeed() {
+        URLCache.shared.removeAllCachedResponses()
+    }
+
+    // Scheduled checks run without going through checkNow, so the cache is cleared for them too.
+    nonisolated func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+        URLCache.shared.removeAllCachedResponses()
     }
 
     // MARK: SPUUpdaterDelegate
