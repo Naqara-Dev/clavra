@@ -5,11 +5,11 @@ import Foundation
 indirect enum PaneNode: Equatable {
     enum Axis { case sideBySide, stacked }
 
-    case leaf(Session.ID)
+    case leaf(UUID)
     case split(Axis, [PaneNode])
 
     /// Pane ids left to right, top to bottom.
-    var ids: [Session.ID] {
+    var ids: [UUID] {
         switch self {
         case .leaf(let id): [id]
         case .split(_, let children): children.flatMap(\.ids)
@@ -18,7 +18,7 @@ indirect enum PaneNode: Equatable {
 
     /// Puts `new` next to `target`. Splitting along the axis a pane already sits in adds a sibling
     /// instead of nesting, so three side-by-side panes share the width evenly.
-    func splitting(_ target: Session.ID, with new: Session.ID, along axis: Axis) -> PaneNode {
+    func splitting(_ target: UUID, with new: UUID, along axis: Axis) -> PaneNode {
         switch self {
         case .leaf(let id):
             return id == target ? .split(axis, [.leaf(id), .leaf(new)]) : self
@@ -33,7 +33,7 @@ indirect enum PaneNode: Equatable {
     }
 
     /// Without `target`; nil when nothing is left. A split left with one child becomes that child.
-    func removing(_ target: Session.ID) -> PaneNode? {
+    func removing(_ target: UUID) -> PaneNode? {
         switch self {
         case .leaf(let id):
             return id == target ? nil : self
@@ -50,18 +50,18 @@ indirect enum PaneNode: Equatable {
 final class TabGroup: Identifiable {
     let id = UUID()
     var root: PaneNode
-    var focused: Session.ID
+    var focused: UUID
 
-    init(_ session: Session.ID) {
+    init(_ session: UUID) {
         root = .leaf(session)
         focused = session
     }
 
-    var paneIDs: [Session.ID] { root.ids }
+    var paneIDs: [UUID] { root.ids }
     var isSplit: Bool { paneIDs.count > 1 }
 
     /// The pane after (or before) the focused one, wrapping around.
-    func neighbor(_ step: Int) -> Session.ID? {
+    func neighbor(_ step: Int) -> UUID? {
         let ids = paneIDs
         guard ids.count > 1, let index = ids.firstIndex(of: focused) else { return nil }
         return ids[(index + step + ids.count) % ids.count]

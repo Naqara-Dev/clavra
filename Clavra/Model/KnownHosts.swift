@@ -14,12 +14,22 @@ enum KnownHosts {
     static let file = Library.folder.appending(path: "known_hosts")
 
     static func check(host: String, port: Int, key: String) -> Verdict {
+        check(host: host, port: port, key: key, ours: file,
+              system: FileManager.default.homeDirectoryForCurrentUser.appending(path: ".ssh/known_hosts"))
+    }
+
+    /// The same, against any two files; the tests use their own.
+    static func check(host: String, port: Int, key: String, ours oursFile: URL, system systemFile: URL) -> Verdict {
         let name = entryName(host, port)
-        let ours = entries(in: file).filter { $0.names.contains(name) }
+        let ours = entries(in: oursFile).filter { $0.names.contains(name) }
         if ours.contains(where: { $0.key == key }) { return .trusted }
         if !ours.isEmpty { return .changed }
-        let system = entries(in: FileManager.default.homeDirectoryForCurrentUser.appending(path: ".ssh/known_hosts"))
-        if system.contains(where: { $0.names.contains(name) && $0.key == key }) { return .trusted }
+        let system = entries(in: systemFile).filter { $0.names.contains(name) }
+        if system.contains(where: { $0.key == key }) { return .trusted }
+        // ~/.ssh/known_hosts knows this host by a key of the same type and this isn't it: as alarming
+        // as a change Clavra saw itself. (A host listed only with a different type of key is new.)
+        let type = key.split(separator: " ").first.map(String.init)
+        if system.contains(where: { $0.key.split(separator: " ").first.map(String.init) == type }) { return .changed }
         return .unknown
     }
 

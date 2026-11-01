@@ -83,6 +83,16 @@ xcodebuild -project Clavra.xcodeproj -scheme Clavra -configuration Debug \
   -derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages build
 ```
 
+## Tests
+
+```sh
+./scripts/test.sh   # logic: risky commands, prompts, safe names, secrets, tunnels, panes, host keys, phone crypto
+./scripts/e2e.sh    # the Debug build against a throwaway sshd on 127.0.0.1:2222, every feature end to end
+```
+
+`e2e.sh` needs the Debug build and ports 2222, 8765, 18765, 19876 and 11080 free. It makes its
+own server, keys and files in a temporary folder and removes everything it added when it's done.
+
 ## Dependencies
 
 | Package | Version | Why pinned there |

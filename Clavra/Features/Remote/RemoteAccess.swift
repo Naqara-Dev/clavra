@@ -33,7 +33,10 @@ final class RemoteAccess {
     @ObservationIgnored private var socket: NWListener?
     @ObservationIgnored private var key = SymmetricKey(size: .bits256)
     @ObservationIgnored private var links: [UUID: Link] = [:]
-    @ObservationIgnored private var allowedDevices: Set<String> = []
+    /// Tokens this Mac handed to phones it allowed, mapped to the phone that holds each.
+    @ObservationIgnored private var tokens: [String: String] = [:]
+    /// Phones told no; they stay out until access is turned off.
+    @ObservationIgnored private var refused: Set<String> = []
     @ObservationIgnored private var flush: Task<Void, Never>?
     @ObservationIgnored private var idle: Task<Void, Never>?
     @ObservationIgnored private var lastActivity = Date.now
@@ -50,7 +53,8 @@ final class RemoteAccess {
             return
         }
         key = SymmetricKey(size: .bits256)
-        allowedDevices = []
+        tokens = [:]
+        refused = []
         do {
             let socket = try listener(on: address, webSocket: true)
             let page = try listener(on: address, webSocket: false)
@@ -87,7 +91,8 @@ final class RemoteAccess {
         isOn = false
         url = nil
         qr = nil
-        allowedDevices = []
+        tokens = [:]
+        refused = []
     }
 
     private func listener(on address: String, webSocket: Bool) throws -> NWListener {
@@ -130,22 +135,32 @@ final class RemoteAccess {
 
     // MARK: Devices
 
+    /// Lets the phone in, and hands it a random token so it can come back after a dropped
+    /// connection without asking again. The token is ours, not something the phone chose.
     func allow(_ id: UUID) {
         guard let index = devices.firstIndex(where: { $0.id == id }), let link = links[id] else { return }
         devices[index].allowed = true
         link.allowed = true
-        allowedDevices.insert(link.deviceID)
+        let token = Data((0..<24).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
+        tokens[token] = link.deviceID
+        link.send(["t": "token", "token": token], key: key)
         sendSessions(to: link)
         sendScreen(to: link, full: true)
     }
 
+    /// "Don't Allow" and "Remove": that phone is out, on every connection it has, until access is
+    /// turned off. Its page stops reconnecting.
     func disconnect(_ id: UUID) {
-        if let link = links.removeValue(forKey: id) {
-            link.send(["t": "bye"], key: key)
-            allowedDevices.remove(link.deviceID)
-            link.connection.cancel()
+        guard let link = links[id] else { return devices.removeAll { $0.id == id } }
+        let phone = link.deviceID
+        if !phone.isEmpty { refused.insert(phone) }
+        tokens = tokens.filter { $0.value != phone || phone.isEmpty }
+        for other in links.values where other.id == id || (!phone.isEmpty && other.deviceID == phone) {
+            other.send(["t": "bye"], key: key)
+            other.connection.cancel()
+            links.removeValue(forKey: other.id)
+            devices.removeAll { $0.id == other.id }
         }
-        devices.removeAll { $0.id == id }
     }
 
     var waiting: Device? { devices.first { !$0.allowed } }
@@ -204,6 +219,7 @@ final class RemoteAccess {
         var sent = 0
         var session: Session.ID?
         var seen: [String] = []
+        var signature = ""
 
         init(_ connection: NWConnection) { self.connection = connection }
 
@@ -267,9 +283,14 @@ final class RemoteAccess {
         lastActivity = .now
         switch message["t"] as? String {
         case "hello":
-            link.deviceID = (message["device"] as? String) ?? ""
+            link.deviceID = String(((message["device"] as? String) ?? "").prefix(64))
+            if link.deviceID == "anonymous" { link.deviceID = "" }
+            if refused.contains(link.deviceID) {
+                link.send(["t": "bye"], key: key)
+                return link.connection.cancel()
+            }
             let name = String(((message["name"] as? String) ?? "Phone").prefix(40))
-            let known = allowedDevices.contains(link.deviceID)
+            let known = (message["token"] as? String).map { tokens[$0] != nil } ?? false
             link.allowed = known
             devices.append(Device(id: link.id, name: name, allowed: known))
             if known {
@@ -285,13 +306,19 @@ final class RemoteAccess {
                 #endif
             }
         case "select":
-            guard link.allowed, let raw = message["session"] as? String, let id = UUID(uuidString: raw) else { return }
+            guard link.allowed, let raw = message["session"] as? String, let id = UUID(uuidString: raw),
+                  model?.session(id) != nil else { return }
             link.session = id
             link.seen = []
             sendSessions(to: link)
             sendScreen(to: link, full: true)
         case "input":
-            guard link.allowed, let text = message["data"] as? String, let session = target(of: link) else { return }
+            // Only into the tab the phone is looking at; if that one has gone, nowhere.
+            guard link.allowed, let text = message["data"] as? String else { return }
+            guard let id = link.session, (message["session"] as? String) == id.uuidString, let session = model?.session(id) else {
+                sendSessions(to: link)
+                return link.send(["t": "readonly"], key: key)
+            }
             guard canType(in: session) else { return link.send(["t": "readonly"], key: key) }
             session.receiveRemote(text)
         default:
@@ -303,35 +330,51 @@ final class RemoteAccess {
         session.isLive && (session.server.place != .production || typingInProduction)
     }
 
+    /// The tab a phone is watching. When it has gone, the phone is moved to the front tab and told,
+    /// so what it shows and where it types never differ.
     private func target(of link: Link) -> Session? {
         guard let model else { return nil }
         if let id = link.session, let session = model.session(id) { return session }
         let session = model.current ?? model.sessions.first
-        link.session = session?.id
+        if link.session != session?.id {
+            link.session = session?.id
+            link.seen = []
+            link.signature = ""
+        }
         return session
     }
 
     // MARK: Telling phones what changed
 
-    /// Tabs opened, closed or renamed.
+    /// Tabs or panes opened, closed or renamed.
     func sessionsChanged() {
         for link in links.values where link.allowed { sendSessions(to: link) }
     }
 
+    /// What a phone's tab list shows; when it changes, the list is sent again.
+    private func signature() -> String {
+        (model?.sessions ?? []).map { "\($0.id)|\($0.title)|\($0.isLive)|\($0.held?.command ?? "")|\(canType(in: $0))" }.joined(separator: "\n")
+    }
+
     /// A terminal printed something; phones watching it get the changed rows, at most ~15 times a second.
     func screenChanged(_ id: Session.ID) {
-        guard isOn, links.values.contains(where: { $0.allowed && ($0.session == id || $0.session == nil) }), flush == nil else { return }
+        guard isOn, links.values.contains(where: \.allowed), flush == nil else { return }
         flush = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(66))
             guard let self else { return }
             self.flush = nil
-            for link in self.links.values where link.allowed { self.sendScreen(to: link, full: false) }
+            let now = self.signature()
+            for link in self.links.values where link.allowed {
+                if link.signature != now { self.sendSessions(to: link) }
+                self.sendScreen(to: link, full: false)
+            }
         }
     }
 
     private func sendSessions(to link: Link) {
         guard let model else { return }
         let current = target(of: link)
+        link.signature = signature()
         let list: [[String: Any]] = model.sessions.map { session in
             ["id": session.id.uuidString, "title": session.title, "host": session.server.target,
              "place": session.server.place.rawValue, "live": session.isLive, "typing": canType(in: session),

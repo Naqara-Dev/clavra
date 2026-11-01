@@ -72,7 +72,9 @@ final class ForwardList {
         try await client.client.withRemotePortForward(host: "localhost", port: forward.port, onOpen: { _ in await opened() }) { channel, _ in
             // The server sends nothing until this future succeeds, so the Mac side is dialled first.
             channel.pipeline.addHandler(ChannelDataCodec()).flatMap {
-                ClientBootstrap(group: channel.eventLoop).connect(host: macHost, port: macPort)
+                ClientBootstrap(group: channel.eventLoop)
+                    .channelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+                    .connect(host: macHost, port: macPort)
             }.flatMap { local in
                 local.pipeline.addHandler(Relay(peer: channel)).flatMap {
                     channel.pipeline.addHandler(Relay(peer: local))
@@ -128,6 +130,7 @@ final class LocalListener: Sendable {
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             // Nothing is read until the tunnel's other end is ready, so no bytes fall on the floor.
             .childChannelOption(ChannelOptions.autoRead, value: false)
+            .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .childChannelInitializer { local in
                 socks ? local.pipeline.addHandler(SOCKSOpener(client: client))
                       : local.pipeline.addHandler(Opener(client: client, host: host, port: remotePort))
@@ -328,33 +331,42 @@ private final class ChannelDataCodec: ChannelDuplexHandler, @unchecked Sendable 
     }
 }
 
-/// Copies what one side reads to the other side, and closes the pair together.
+/// Copies what one side reads to the other side. When one side finishes sending, the other is told
+/// the same (a half-close), and only after everything already read has been written; a side that
+/// goes away takes the other with it, again after the last write. So replies that end with the
+/// server closing (HTTP with `Connection: close`, `nc`, dumps) arrive whole.
 private final class Relay: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
 
     private let peer: Channel
+    /// Touched only on this side's event loop.
+    private var lastWrite: EventLoopFuture<Void>?
 
     init(peer: Channel) { self.peer = peer }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        peer.writeAndFlush(unwrapInboundIn(data), promise: nil)
+        lastWrite = peer.writeAndFlush(unwrapInboundIn(data))
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        peer.close(promise: nil)
+        let peer = peer
+        afterWrites { peer.close(promise: nil) }
         context.fireChannelInactive()
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        // The SSH side reports the far end finishing as a half-close.
         if let event = event as? ChannelEvent, event == .inputClosed {
-            peer.close(promise: nil)
-            context.close(promise: nil)
+            let peer = peer
+            afterWrites { peer.close(mode: .output, promise: nil) }
         }
         context.fireUserInboundEventTriggered(event)
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
+    }
+
+    private func afterWrites(_ then: @escaping @Sendable () -> Void) {
+        if let lastWrite { lastWrite.whenComplete { _ in then() } } else { then() }
     }
 }

@@ -10,6 +10,8 @@ struct FilesPanel: View {
     @State private var newFolder = false
     @State private var newFile = false
     @State private var permissions: FileBrowser.Entry?
+    /// Files waiting for a yes because they'd replace ones on the server.
+    @State private var replacing: [URL] = []
     @State private var name = ""
     @State private var dropping = false
     @State private var selection: FileBrowser.Entry.ID?
@@ -28,7 +30,7 @@ struct FilesPanel: View {
         }
         .task { await browser.start() }
         .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
-            Task { browser.upload(await Self.urls(from: providers)) }
+            Task { offer(await Self.urls(from: providers)) }
             return true
         }
         .overlay {
@@ -38,6 +40,11 @@ struct FilesPanel: View {
                     .padding(8)
                     .allowsHitTesting(false)
             }
+        }
+        .confirmationDialog(replaceTitle, isPresented: Binding(get: { !replacing.isEmpty }, set: { if !$0 { replacing = [] } })) {
+            Button("Replace", role: .destructive) { browser.upload(replacing); replacing = [] }
+        } message: {
+            Text("The copies on \(session.server.title) are swapped for these once each upload finishes.")
         }
         .sheet(item: $renaming) { entry in
             NameSheet(title: "Rename", action: "Rename", name: entry.name) { new in Task { await browser.rename(entry, to: new) } }
@@ -195,7 +202,18 @@ struct FilesPanel: View {
         panel.canChooseDirectories = false
         panel.prompt = "Upload"
         guard panel.runModal() == .OK else { return }
-        browser.upload(panel.urls)
+        offer(panel.urls)
+    }
+
+    /// Uploads straight away unless something would be replaced; then it asks first.
+    private func offer(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        if browser.conflicts(urls).isEmpty { browser.upload(urls) } else { replacing = urls }
+    }
+
+    private var replaceTitle: String {
+        let names = browser.conflicts(replacing)
+        return names.count == 1 ? "Replace \(names[0])?" : "Replace \(names.count) items?"
     }
 
     static func quoted(_ path: String) -> String {

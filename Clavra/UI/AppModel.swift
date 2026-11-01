@@ -44,8 +44,19 @@ final class AppModel {
     }
 
     init() {
+        // Copies opened with "Edit on This Mac" by an earlier run (one that was force-quit, say)
+        // have nothing watching them any more.
+        try? FileManager.default.removeItem(at: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appending(path: "Clavra/Editing"))
         health.watch { [weak self] in self?.store.hosts ?? [] }
         remote.model = self
+        // With iCloud Drive, pick up what other Macs changed every half minute while open.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                self?.refresh()
+            }
+        }
         // A click in a pane gives it the keyboard; the terminal view takes the click itself, so it's
         // noticed on the way in.
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
@@ -81,6 +92,7 @@ final class AppModel {
         tab.root = tab.root.splitting(from.id, with: session.id, along: axis)
         tab.focused = session.id
         rememberTabs()
+        remote.sessionsChanged()
     }
 
     /// ⌥⌘ arrows: the next or previous pane.
@@ -113,8 +125,11 @@ final class AppModel {
         let session = Session(server: server, jump: jump)
         session.isSavedHost = isSaved(server)
         session.mirror = { [weak self, weak session] bytes in
-            guard let self, self.broadcasting, let session, session.id == self.current?.id else { return }
-            for other in self.sessions where other.id != session.id { other.receiveBroadcast(bytes) }
+            guard let self, self.broadcasting, let session, session.id == self.current?.id,
+                  let tab = self.tab(containing: session.id) else { return }
+            // Only the panes of this tab: a production tab in the background never gets typed into
+            // by surprise.
+            for id in tab.paneIDs where id != session.id { self.session(id)?.receiveBroadcast(bytes) }
         }
         session.onScreen = { [weak self, weak session] in
             guard let self, let session else { return }
@@ -152,6 +167,7 @@ final class AppModel {
                 session(tab.focused)?.refocus()
             }
             rememberTabs()
+            remote.sessionsChanged()
         } else {
             removeTab(tab)
         }

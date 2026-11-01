@@ -92,3 +92,33 @@ struct TypedLine {
 
     mutating func reset() { text = "" }
 }
+
+/// The command part of a terminal line, after the shell's prompt.
+enum PromptLine {
+    /// What follows the prompt, so a host called "halt-01" in `deploy@halt-01:~$` isn't read as a command.
+    static func command(in line: String) -> String {
+        command(in: line, strict: false) ?? line
+    }
+
+    /// Strict: nil when no prompt is found, so a password prompt or a program's own input isn't
+    /// taken for a command line.
+    static func command(in line: String, strict: Bool) -> String? {
+        let ends = ["$ ", "# ", "% ", "> ", "❯ ", "➜ "].compactMap { line.range(of: $0)?.upperBound }
+        guard let end = ends.min() else { return strict ? nil : line }
+        var command = String(line[end...])
+        // Oh My Zsh's ➜ prompt puts the folder, and maybe git, after the arrow:
+        // "➜  app ls", "➜  app git:(main) ls", "➜  app git:(main) ✗ ls".
+        if line.contains("➜ ") {
+            var rest = Substring(command).drop { $0 == " " }
+            if let range = rest.range(of: "✗ ") ?? rest.range(of: ") ") {
+                rest = rest[range.upperBound...]
+            } else if let space = rest.firstIndex(of: " ") {
+                rest = rest[rest.index(after: space)...]
+            } else {
+                return ""
+            }
+            command = String(rest)
+        }
+        return command
+    }
+}

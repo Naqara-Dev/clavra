@@ -6,6 +6,8 @@ import SwiftUI
 final class HostStore {
     private(set) var hosts: [Server] = []
     private var file: URL { Library.dataFolder.appending(path: "hosts.json") }
+    /// Deleted here since launch, so a save that folds in the file's hosts doesn't bring them back.
+    @ObservationIgnored private var removed: Set<Server.ID> = []
 
     init() {
         reload()
@@ -19,7 +21,6 @@ final class HostStore {
     /// Hosts in the folder Clavra is moving to win; ones only this Mac had are added to them.
     func merge(_ others: [Server]) {
         let new = others.filter { other in !hosts.contains { $0.id == other.id } }
-        guard !new.isEmpty else { return }
         hosts += new
         persist()
     }
@@ -33,6 +34,7 @@ final class HostStore {
 
     func delete(_ host: Server) {
         hosts.removeAll { $0.id == host.id }
+        removed.insert(host.id)
         for index in hosts.indices where hosts[index].jump == host.id { hosts[index].jump = nil }
         Keychain.forget(host.id)
         persist()
@@ -109,7 +111,13 @@ final class HostStore {
         return result
     }
 
+    /// With iCloud Drive, another Mac may have written since we last read: hosts only the file has
+    /// are kept, not overwritten.
     private func persist() {
+        if Library.syncsWithICloud, let onDisk = Library.load([Server].self, from: file) {
+            let theirs = onDisk.filter { other in !removed.contains(other.id) && !hosts.contains { $0.id == other.id } }
+            hosts += theirs
+        }
         Library.save(hosts, to: file)
     }
 }

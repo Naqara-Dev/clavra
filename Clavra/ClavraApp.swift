@@ -66,7 +66,7 @@ struct ClavraApp: App {
                 Button("Pane Above") { model.focusPane(-1) }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option]).disabled(model.currentTab?.isSplit != true)
                 Divider()
-                Toggle("Type into Every Pane", isOn: $model.broadcasting)
+                Toggle("Type into Every Pane in This Tab", isOn: $model.broadcasting)
                     .keyboardShortcut("i", modifiers: [.command, .option])
                 Divider()
                 Button("Next Tab") { model.cycle(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
@@ -170,6 +170,18 @@ struct RootView: View {
             model.sidePanel = panel == "files" ? .files : panel == "ports" ? .ports : nil
         }
         if UserDefaults.standard.bool(forKey: "ClavraSnippets") { model.showingSnippets = true }
+        // `-ClavraFilesTest dir` drives the file browser for scripts/e2e.sh: downloads everything
+        // named e2e-dl-*, uploads `-ClavraFilesUpload path`, and edits e2e-edit.txt.
+        if let dir = UserDefaults.standard.string(forKey: "ClavraFilesTest") {
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                guard let files = model.current?.files else { return }
+                await files.go(to: dir)
+                for entry in files.entries where entry.name.hasPrefix("e2e-dl-") { files.download(entry) }
+                if let path = UserDefaults.standard.string(forKey: "ClavraFilesUpload") { files.upload([URL(fileURLWithPath: path)]) }
+                if let note = files.entries.first(where: { $0.name == "e2e-edit.txt" }) { files.edit(note) }
+            }
+        }
         // `-ClavraSplit beside,below` splits the new tab, one step per word.
         for step in (UserDefaults.standard.string(forKey: "ClavraSplit") ?? "").split(separator: ",") {
             model.split(step == "below" ? .stacked : .sideBySide)

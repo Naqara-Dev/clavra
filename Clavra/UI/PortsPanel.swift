@@ -52,7 +52,7 @@ struct PortsPanel: View {
                     }
                     ForwardFields(kind: kind, local: $local, remote: $remote)
                     Button(kind == .socks ? "Start Proxy" : "Forward") { addManual() }
-                        .buttonStyle(QuietButtonStyle()).disabled(ForwardFields.parse(kind: kind, local: local, remote: remote) == nil)
+                        .buttonStyle(QuietButtonStyle()).disabled(Server.Forward.parse(kind: kind, local: local, remote: remote) == nil)
                     Text(ForwardFields.note(kind))
                         .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -62,7 +62,7 @@ struct PortsPanel: View {
     }
 
     private func addManual() {
-        guard var forward = ForwardFields.parse(kind: kind, local: local, remote: remote) else { return }
+        guard var forward = Server.Forward.parse(kind: kind, local: local, remote: remote) else { return }
         if forward.kind != .remote { forward.localPort = ForwardList.freePort(from: forward.localPort) }
         session.openForward(forward)
         local = ""
@@ -188,29 +188,6 @@ struct ForwardFields: View {
         case .local: "A port on this Mac reaches the server. localhost on the right means the server itself; another name reaches a machine behind it."
         case .remote: "The server listens on its own loopback and each connection comes back to this Mac, like ssh -R. Handy for webhooks and showing a local app."
         case .socks: "A SOCKS5 proxy on this Mac, like ssh -D. Point a browser at it and its traffic leaves from the server."
-        }
-    }
-
-    static func parse(kind: Server.Forward.Kind, local: String, remote: String) -> Server.Forward? {
-        func split(_ text: String) -> (host: String, port: Int)? {
-            let text = text.trimmingCharacters(in: .whitespaces)
-            if let port = Int(text), port > 0, port < 65_536 { return ("localhost", port) }
-            guard let colon = text.lastIndex(of: ":"), let port = Int(text[text.index(after: colon)...]), port > 0, port < 65_536 else { return nil }
-            let host = String(text[..<colon])
-            return host.isEmpty ? nil : (host, port)
-        }
-        switch kind {
-        case .local:
-            guard let target = split(remote) else { return nil }
-            let mac = Int(local.trimmingCharacters(in: .whitespaces)) ?? target.port
-            return Server.Forward(kind: .local, localPort: mac, host: target.host, port: target.port)
-        case .remote:
-            guard let serverPort = Int(remote.trimmingCharacters(in: .whitespaces)), serverPort > 0,
-                  let mac = split(local) else { return nil }
-            return Server.Forward(kind: .remote, localPort: mac.port, host: mac.host, port: serverPort)
-        case .socks:
-            guard let mac = Int(local.trimmingCharacters(in: .whitespaces)), mac > 0, mac < 65_536 else { return nil }
-            return Server.Forward(kind: .socks, localPort: mac, port: 0)
         }
     }
 }

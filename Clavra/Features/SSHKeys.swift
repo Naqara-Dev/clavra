@@ -206,6 +206,7 @@ enum SSHKeys {
         guard !line.contains("'"), !line.contains("\n") else { throw KeyError.failed("That public key has characters a shell can't take safely.") }
         let script = """
         umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
+        { [ ! -s ~/.ssh/authorized_keys ] || [ -z "$(tail -c1 ~/.ssh/authorized_keys)" ] || echo >> ~/.ssh/authorized_keys; } && \
         (grep -qxF '\(line)' ~/.ssh/authorized_keys || printf '%s\\n' '\(line)' >> ~/.ssh/authorized_keys) && \
         chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
         """

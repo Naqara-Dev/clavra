@@ -47,10 +47,12 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
         port == 22 ? "\(user)@\(address)" : "\(user)@\(address):\(port)"
     }
 
-    /// Two letters for the host's tile.
+    /// Two letters for the host's tile: the first letters of the first two words ("api prod" is
+    /// "ap"), or the first two letters of a single word.
     var monogram: String {
-        let letters = title.lowercased().filter { $0.isLetter || $0.isNumber }
-        return String(letters.prefix(2))
+        let words = title.lowercased().split { !($0.isLetter || $0.isNumber) }
+        if words.count >= 2, let a = words[0].first, let b = words[1].first { return String([a, b]) }
+        return String((words.first ?? "").prefix(2))
     }
 
     /// Reads `user@host:port`, `host:port` or `host`. The user defaults to the Mac's.
@@ -109,6 +111,30 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
             self.host = host
             self.port = port
             self.automatic = automatic
+        }
+
+        /// Reads the two fields of the "add a tunnel" form for `kind`.
+        static func parse(kind: Kind, local: String, remote: String) -> Server.Forward? {
+            func split(_ text: String) -> (host: String, port: Int)? {
+                let text = text.trimmingCharacters(in: .whitespaces)
+                if let port = Int(text), port > 0, port < 65_536 { return ("localhost", port) }
+                guard let colon = text.lastIndex(of: ":"), let port = Int(text[text.index(after: colon)...]), port > 0, port < 65_536 else { return nil }
+                let host = String(text[..<colon])
+                return host.isEmpty ? nil : (host, port)
+            }
+            switch kind {
+            case .local:
+                guard let target = split(remote) else { return nil }
+                let mac = Int(local.trimmingCharacters(in: .whitespaces)) ?? target.port
+                return Server.Forward(kind: .local, localPort: mac, host: target.host, port: target.port)
+            case .remote:
+                guard let serverPort = Int(remote.trimmingCharacters(in: .whitespaces)), serverPort > 0,
+                      let mac = split(local) else { return nil }
+                return Server.Forward(kind: .remote, localPort: mac.port, host: mac.host, port: serverPort)
+            case .socks:
+                guard let mac = Int(local.trimmingCharacters(in: .whitespaces)), mac > 0, mac < 65_536 else { return nil }
+                return Server.Forward(kind: .socks, localPort: mac, port: 0)
+            }
         }
 
         init(from decoder: Decoder) throws {

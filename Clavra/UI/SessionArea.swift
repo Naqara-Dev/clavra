@@ -50,7 +50,7 @@ private struct TabStrip: View {
                 Button { model.broadcasting = false } label: {
                     HStack(spacing: 6) {
                         Circle().fill(Theme.brass).frame(width: 6, height: 6)
-                        Text("Typing into every pane").font(.system(size: 11.5, weight: .medium))
+                        Text("Typing into every pane in this tab").font(.system(size: 11.5, weight: .medium))
                     }
                     .foregroundStyle(Theme.brass)
                     .padding(.horizontal, 10)

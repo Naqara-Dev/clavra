@@ -148,7 +148,7 @@ struct HostEditor: View {
                 .labelsHidden().fixedSize()
                 ForwardFields(kind: newKind, local: $newLocal, remote: $newRemote)
                 Button("Add", action: addForward).buttonStyle(QuietButtonStyle())
-                    .disabled(ForwardFields.parse(kind: newKind, local: newLocal, remote: newRemote) == nil)
+                    .disabled(Server.Forward.parse(kind: newKind, local: newLocal, remote: newRemote) == nil)
             }
         }
 
@@ -175,7 +175,7 @@ struct HostEditor: View {
     }
 
     private func addForward() {
-        guard let forward = ForwardFields.parse(kind: newKind, local: newLocal, remote: newRemote) else { return }
+        guard let forward = Server.Forward.parse(kind: newKind, local: newLocal, remote: newRemote) else { return }
         server.forwards.append(forward)
         newLocal = ""
         newRemote = ""

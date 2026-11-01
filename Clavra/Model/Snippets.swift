@@ -13,6 +13,7 @@ struct Snippet: Identifiable, Codable, Hashable, Sendable {
 final class SnippetStore {
     private(set) var snippets: [Snippet] = []
     private var file: URL { Library.dataFolder.appending(path: "snippets.json") }
+    @ObservationIgnored private var removed: Set<Snippet.ID> = []
 
     init() {
         reload()
@@ -27,7 +28,6 @@ final class SnippetStore {
 
     func merge(_ others: [Snippet]) {
         let new = others.filter { other in !snippets.contains { $0.id == other.id } }
-        guard !new.isEmpty else { return }
         snippets += new
         persist()
     }
@@ -39,6 +39,7 @@ final class SnippetStore {
 
     func delete(_ snippet: Snippet) {
         snippets.removeAll { $0.id == snippet.id }
+        removed.insert(snippet.id)
         persist()
     }
 
@@ -49,6 +50,9 @@ final class SnippetStore {
     }
 
     private func persist() {
+        if Library.syncsWithICloud, let onDisk = Library.load([Snippet].self, from: file) {
+            snippets += onDisk.filter { other in !removed.contains(other.id) && !snippets.contains { $0.id == other.id } }
+        }
         Library.save(snippets, to: file)
     }
 

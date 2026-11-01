@@ -74,6 +74,10 @@ final class Session: Identifiable {
     /// Automatic attempts since the connection last dropped.
     @ObservationIgnored private var attempts = 0
     @ObservationIgnored private var userClosed = false
+    /// Bumped by every connect and close. A connection attempt that finishes after its generation
+    /// has passed closes what it opened instead of taking over the tab: Citadel's connect doesn't
+    /// stop when its task is cancelled.
+    @ObservationIgnored private var generation = 0
     /// Tunnels that were open when the connection dropped, opened again once it's back.
     @ObservationIgnored private var carried: [Server.Forward] = []
 
@@ -112,12 +116,17 @@ final class Session: Identifiable {
 
     func connect() {
         task?.cancel()
+        answer?.resume(returning: false)
+        answer = nil
+        generation += 1
+        teardown(keepFiles: false)
         attempts = 0
         carried = []
         userClosed = false
         state = .connecting
         terminal.feed(text: "\u{1b}[2J\u{1b}[H")
-        task = Task { await run() }
+        let current = generation
+        task = Task { await run(current) }
     }
 
     /// Picks up edits made to the host while this tab was failing, then tries again.
@@ -130,15 +139,17 @@ final class Session: Identifiable {
 
     func close() {
         userClosed = true
+        generation += 1
         answer?.resume(returning: false)
         answer = nil
         task?.cancel()
-        teardown()
+        teardown(keepFiles: false)
         if state != .closed, !isFailed { state = .closed }
     }
 
-    /// Everything that hangs off the connection goes with it.
-    private func teardown() {
+    /// Everything that hangs off the connection goes with it. Files being edited survive a reconnect;
+    /// their saves go up once the connection is back.
+    private func teardown(keepFiles: Bool) {
         outgoing?.finish()
         outgoing = nil
         statsTask?.cancel()
@@ -146,8 +157,10 @@ final class Session: Identifiable {
         forwards.closeAll()
         if let sftp = sftpClient { Task { try? await sftp.close() } }
         sftpClient = nil
-        browser?.stopEditing()
-        browser = nil
+        if !keepFiles {
+            browser?.stopEditing()
+            browser = nil
+        }
         hideSuggestion()
         client?.close()
         client = nil
@@ -169,7 +182,8 @@ final class Session: Identifiable {
 
     // MARK: Connection
 
-    private func run() async {
+    private func run(_ current: Int) async {
+        func stale() -> Bool { current != generation || userClosed }
         do {
             nonisolated(unsafe) let method = try Credentials.method(for: server)
             let target = server
@@ -185,10 +199,17 @@ final class Session: Identifiable {
                                             authenticationMethod: { jumpMethod }, hostKeyValidator: .custom(jumpCheck))
                 hop.connectTimeout = .seconds(12)
                 let jumpClient = ClientBox(try await SSHClient.connect(to: hop))
+                if stale() { return jumpClient.close() }
                 self.jumpClient = jumpClient
                 client = try await Self.hop(through: jumpClient, settings)
             } else {
                 client = ClientBox(try await SSHClient.connect(to: settings))
+            }
+            if stale() {
+                client.close()
+                if current != generation { return }
+                jumpClient?.close()
+                return
             }
             self.client = client
 
@@ -233,12 +254,14 @@ final class Session: Identifiable {
             try await Self.pump(client, request: request, input: input) { [weak self] bytes in
                 await self?.show(bytes)
             }
+            guard current == generation else { return }
             end(.closed)
         } catch is CancellationError {
         } catch {
+            guard current == generation else { return }
             let wasConnected = state == .connected || { if case .reconnecting = state { true } else { false } }()
             if state == .connected { carried = forwards.items.map(\.forward) }
-            teardown()
+            teardown(keepFiles: wasConnected && !userClosed)
             // A live session that drops (Wi-Fi change, sleep, a blip) tries again a few times on its
             // own. Failing to connect in the first place doesn't; that's for the user to look at.
             if wasConnected, !userClosed, attempts < 4 {
@@ -248,8 +271,8 @@ final class Session: Identifiable {
                 let wait = [2, 5, 10, 20][attempts - 1]
                 task = Task {
                     try? await Task.sleep(for: .seconds(wait))
-                    guard !Task.isCancelled, !self.userClosed else { return }
-                    await self.run()
+                    guard !Task.isCancelled, !self.userClosed, current == self.generation else { return }
+                    await self.run(current)
                 }
                 return
             }
@@ -258,7 +281,7 @@ final class Session: Identifiable {
     }
 
     private func end(_ final: State) {
-        teardown()
+        teardown(keepFiles: false)
         if case .failed = final { state = final } else if state != .closed { state = final }
     }
 
@@ -310,6 +333,8 @@ final class Session: Identifiable {
             Task { try? await Task.sleep(for: .seconds(2.5)); self.answerHostKey(true) }
         }
         #endif
+        // A question still open from an earlier attempt is answered no, never left hanging.
+        answer?.resume(returning: false)
         let trust = await withCheckedContinuation { answer = $0 }
         if trust { KnownHosts.trust(host: host.address, port: host.port, key: text) }
         return trust
@@ -324,15 +349,17 @@ final class Session: Identifiable {
             self.held = held
             return
         }
-        if data.count == 1, data.first == 0x0D { remember(Self.commandPart(of: screenLine(), strict: true)) }
+        if data.count == 1, data.first == 0x0D { remember(PromptLine.command(in: screenLine(), strict: true)) }
         typed.feed(data)
         outgoing?.yield(.bytes(Array(data)))
     }
 
     // MARK: Suggestions
 
+    /// Production hosts don't add to the history kept on disk; their server-side history still
+    /// feeds suggestions for the session.
     private func remember(_ command: String?) {
-        guard let command, CommandHistory.isEnabled else { return }
+        guard let command, CommandHistory.isEnabled, server.place != .production else { return }
         history.record(command)
     }
 
@@ -341,7 +368,10 @@ final class Session: Identifiable {
         guard let suggestion, !suggestion.isEmpty else { return false }
         let right: [[UInt8]] = [[0x1B, 0x5B, 0x43], [0x1B, 0x4F, 0x43], [0x06]]
         guard right.contains(Array(data)) else { return false }
-        send(ArraySlice(Array(suggestion.utf8)))
+        let bytes = ArraySlice(Array(suggestion.utf8))
+        send(bytes)
+        // Other panes typing along get the same text, not an arrow key they'd read differently.
+        mirror?(bytes)
         hideSuggestion()
         return true
     }
@@ -353,7 +383,7 @@ final class Session: Identifiable {
         guard !term.isCurrentBufferAlternate else { return hideSuggestion() }
         let cursor = term.getCursorLocation()
         let line = term.getLine(row: cursor.y)?.translateToString(trimRight: true) ?? ""
-        guard cursor.x == line.count, let typed = Self.commandPart(of: line, strict: true), !typed.isEmpty,
+        guard cursor.x == line.count, let typed = PromptLine.command(in: line, strict: true), !typed.isEmpty,
               let rest = history.suggestion(for: typed) else { return hideSuggestion() }
         suggestion = rest
         ghost?.show(rest, column: cursor.x, row: cursor.y, in: terminal)
@@ -453,7 +483,7 @@ final class Session: Identifiable {
             if index == 0 {
                 pending.feed(ArraySlice(Array(part.utf8)))
                 lines.append(pending.text)
-                lines.append(Self.commandPart(of: screenLine()) + part)
+                lines.append(PromptLine.command(in: screenLine()) + part)
             } else {
                 lines.append(String(part))
             }
@@ -472,32 +502,6 @@ final class Session: Identifiable {
         return terminal.getLine(row: row)?.translateToString(trimRight: true) ?? ""
     }
 
-    /// What follows the prompt, so a host called "halt-01" in `deploy@halt-01:~$` isn't read as a command.
-    nonisolated static func commandPart(of line: String) -> String {
-        commandPart(of: line, strict: false) ?? line
-    }
-
-    /// Strict: nil when no prompt is found, so a password prompt or a program's own input isn't
-    /// taken for a command line.
-    nonisolated static func commandPart(of line: String, strict: Bool) -> String? {
-        let ends = ["$ ", "# ", "% ", "> ", "❯ ", "➜ "].compactMap { line.range(of: $0)?.upperBound }
-        guard let end = ends.min() else { return strict ? nil : line }
-        var command = String(line[end...])
-        // Oh My Zsh's ➜ prompt puts the folder, and maybe git, after the arrow:
-        // "➜  app ls", "➜  app git:(main) ls", "➜  app git:(main) ✗ ls".
-        if line.contains("➜ ") {
-            var rest = Substring(command).drop { $0 == " " }
-            if let range = rest.range(of: "✗ ") ?? rest.range(of: ") ") {
-                rest = rest[range.upperBound...]
-            } else if let space = rest.firstIndex(of: " ") {
-                rest = rest[rest.index(after: space)...]
-            } else {
-                return ""
-            }
-            command = String(rest)
-        }
-        return command
-    }
 
     fileprivate func resized(cols: Int, rows: Int) {
         outgoing?.yield(.resize(cols: cols, rows: rows))

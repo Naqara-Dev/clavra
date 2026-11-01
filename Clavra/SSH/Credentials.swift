@@ -13,6 +13,7 @@ enum ClavraError: LocalizedError {
     case hostKeyRejected
     case notConnected
     case encryptedECDSA
+    case wrongPassphrase
 
     var errorDescription: String? {
         switch self {
@@ -23,6 +24,7 @@ enum ClavraError: LocalizedError {
         case .noPassword: "No password saved for this host. Add it in the host's settings."
         case .hostKeyRejected: "You didn't trust the server's key, so Clavra didn't connect."
         case .notConnected: "This tab isn't connected right now."
+        case .wrongPassphrase: "The saved passphrase doesn't open this key. Check it in the host's settings."
         case .encryptedECDSA: "Clavra can't open passphrase-protected ECDSA keys yet. Use an ed25519 key, or one without a passphrase."
         }
     }
@@ -75,7 +77,15 @@ enum Credentials {
                 // Older PEM files: CryptoKit reads these directly.
                 return try ECDSAKey.method(user: server.user, text: text)
             } catch {
-                throw passphrase == nil && text.contains("aes256") ? ClavraError.needsPassphrase : error
+                // The cipher name is base64 inside an OpenSSH file, so ask the parser what went wrong.
+                let raw = String(describing: error)
+                if raw.contains("missingDecryptionKey") || (passphrase == nil && text.contains("ENCRYPTED")) {
+                    throw ClavraError.needsPassphrase
+                }
+                if passphrase != nil, raw.contains("invalidCheck") || raw.contains("decrypt") || raw.contains("invalidPadding") {
+                    throw ClavraError.wrongPassphrase
+                }
+                throw error
             }
         }
     }

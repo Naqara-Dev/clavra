@@ -8,7 +8,8 @@
   const key = secret ? Uint8Array.from(atob(secret.replace(/-/g, "+").replace(/_/g, "/") + "==".slice(0, (4 - secret.length % 4) % 4)), (c) => c.charCodeAt(0)) : null;
   history.replaceState(null, "", location.pathname); // the key doesn't stay in the address bar
 
-  let socket = null, challenge = null, sent = 0, received = 0;
+  let socket = null, challenge = null, sent = 0, received = 0, stopped = false, token = "";
+  try { token = localStorage.getItem("clavra-token-" + portText) || ""; } catch (e) {}
   let cols = 80, rows = [], cursor = [0, 0], typing = false, ctrl = false, fit = true, session = "";
 
   const palette = ["#2a282e", "#e2857a", "#93c7a6", "#d8b46c", "#8fb3dc", "#c7a0d8", "#8ccbc7", "#d9d6cf",
@@ -33,7 +34,10 @@
         localStorage.setItem("clavra-device", id);
       }
       return id;
-    } catch (e) { return "anonymous"; }
+    } catch (e) {
+      // No storage (private mode): a fresh id for this page, never a shared one.
+      return deviceId.fallback || (deviceId.fallback = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(""));
+    }
   }
 
   function deviceName() {
@@ -146,8 +150,13 @@
         intro("Waiting for your Mac", "Choose Allow on the Mac to let this phone in.");
         break;
       case "bye":
-        intro("Disconnected", "Remote access was turned off on the Mac, or this phone was removed.");
+        stopped = true;
+        intro("Disconnected", "Phone access was turned off on the Mac, or this phone was turned away. Scan the code again to ask once more.");
         socket.close();
+        break;
+      case "token":
+        token = message.token;
+        try { localStorage.setItem("clavra-token-" + portText, token); } catch (e) {}
         break;
       case "sessions": {
         showTerminal();
@@ -194,7 +203,7 @@
       if (!challenge) {
         if (new TextDecoder().decode(data.subarray(0, 4)) !== "CLV1") return socket.close();
         challenge = data.slice(4, 20);
-        send({ t: "hello", device: deviceId(), name: deviceName() });
+        send({ t: "hello", device: deviceId(), name: deviceName(), token: token });
         return;
       }
       const opened = ClavraAEAD.open(key, data.subarray(0, 12), data.subarray(12), challenge);
@@ -207,6 +216,7 @@
     };
     socket.onclose = () => {
       $("dot").classList.remove("on");
+      if (stopped) return;
       if ($("intro").hidden) note("Connection lost. Reconnecting…", true);
       challenge = null; sent = 0; received = 0;
       setTimeout(connect, 2000);
@@ -220,7 +230,7 @@
       if (code >= 64 && code <= 95) text = String.fromCharCode(code - 64);
       ctrl = false; $("ctrl").classList.remove("on");
     }
-    send({ t: "input", data: text });
+    send({ t: "input", data: text, session: session });
   }
 
   const keys = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",

@@ -116,7 +116,7 @@ final class FileBrowser {
     }
 
     private static func entry(_ component: SFTPPathComponent) -> Entry? {
-        guard component.filename != ".", component.filename != ".." else { return nil }
+        guard SafeNames.isSafe(component.filename) else { return nil }
         let mode = component.attributes.permissions ?? 0
         let type = mode & 0o170000
         let long = component.longname
@@ -179,7 +179,8 @@ final class FileBrowser {
     /// A file, or a whole folder with everything inside it.
     func download(_ entry: Entry) {
         let source = join(entry.name)
-        let target = Self.unused(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].appending(path: entry.name))
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        guard SafeNames.isSafe(entry.name), let target = SafeNames.contained(Self.unused(downloads.appending(path: entry.name)), in: downloads) else { return }
         let transfer = Transfer(name: entry.name, direction: .down, total: entry.isFolder ? nil : entry.size)
         transfers.insert(transfer, at: 0)
         Task { [weak self] in
@@ -199,6 +200,11 @@ final class FileBrowser {
                 finish(transfer.id, Self.describe(error))
             }
         }
+    }
+
+    /// Names already in this folder, which an upload of `urls` would replace.
+    func conflicts(_ urls: [URL]) -> [String] {
+        urls.map(\.lastPathComponent).filter { name in entries.contains { $0.name == name } }
     }
 
     /// Files and folders; folders go up with everything inside.
@@ -245,15 +251,17 @@ final class FileBrowser {
     // MARK: Editing
 
     @ObservationIgnored private var editors: [String: Task<Void, Never>] = [:]
+    /// This tab's own copies, so closing it never touches another tab's open files.
+    @ObservationIgnored private lazy var editingFolder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appending(path: "Clavra/Editing/\(UUID().uuidString)", directoryHint: .isDirectory)
 
-    /// Opens the file in the Mac's app for its type. Every save there goes back to the server, for as
-    /// long as this tab is connected.
+    /// Opens the file in the Mac's app for its type. Every save there goes back to the server for as
+    /// long as the tab is open; a save made while the connection is down goes up once it's back.
     func edit(_ entry: Entry) {
-        guard !entry.isFolder else { return }
+        guard !entry.isFolder, SafeNames.isSafe(entry.name) else { return }
         let source = join(entry.name)
         editors[source]?.cancel()
-        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: "Clavra/Editing/\(UUID().uuidString)", directoryHint: .isDirectory)
+        let folder = editingFolder.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         let local = folder.appending(path: entry.name)
         var transfer = Transfer(name: entry.name, direction: .editing, total: entry.size)
         transfer.done = 0
@@ -264,17 +272,34 @@ final class FileBrowser {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 let sftp = try await session.sftp()
                 try await Self.download(source, to: local, with: sftp) { _ in }
+                #if DEBUG
+                if UserDefaults.standard.bool(forKey: "ClavraEditNoOpen") {
+                    print("CLAVRA_EDIT \(local.path)")
+                    fflush(stdout)
+                } else {
+                    NSWorkspace.shared.open(local)
+                }
+                #else
                 NSWorkspace.shared.open(local)
+                #endif
                 var stamp = Self.modified(local)
                 while !Task.isCancelled {
                     try await Task.sleep(for: .seconds(1))
                     let now = Self.modified(local)
                     guard now != stamp else { continue }
-                    stamp = now
-                    let sftp = try await session.sftp()
-                    try await Self.upload(local, to: source, with: sftp) { _ in }
-                    saved(transfer.id)
-                    await load()
+                    do {
+                        let sftp = try await session.sftp()
+                        try await Self.upload(local, to: source, with: sftp) { _ in }
+                        stamp = now
+                        saved(transfer.id)
+                        await load()
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        // Not sent; the stamp stays put so the next tick tries again.
+                        pending(transfer.id, Self.describe(error))
+                        try await Task.sleep(for: .seconds(3))
+                    }
                 }
             } catch is CancellationError {
             } catch {
@@ -283,17 +308,25 @@ final class FileBrowser {
         }
     }
 
-    /// Stops sending saves back, and cleans up the local copies.
+    /// Stops sending saves back, and cleans up this tab's local copies.
     func stopEditing() {
         for task in editors.values { task.cancel() }
         editors = [:]
         transfers.removeAll { $0.direction == .editing }
-        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "Clavra/Editing")
-        try? FileManager.default.removeItem(at: folder)
+        try? FileManager.default.removeItem(at: editingFolder)
     }
 
+    var isEditing: Bool { !editors.isEmpty }
+
     private func saved(_ id: Transfer.ID) {
-        if let index = transfers.firstIndex(where: { $0.id == id }) { transfers[index].done += 1 }
+        if let index = transfers.firstIndex(where: { $0.id == id }) {
+            transfers[index].done += 1
+            transfers[index].failed = nil
+        }
+    }
+
+    private func pending(_ id: Transfer.ID, _ why: String) {
+        if let index = transfers.firstIndex(where: { $0.id == id }) { transfers[index].failed = "Not uploaded yet: \(why) Trying again." }
     }
 
     private nonisolated static func modified(_ url: URL) -> Date? {
@@ -319,17 +352,41 @@ final class FileBrowser {
         }
     }
 
+    /// Writes to a temporary name beside the destination and renames it into place, so a dropped
+    /// connection never leaves a half-written file where the old one was. The old file's permissions
+    /// carry over.
     private nonisolated static func upload(_ source: URL, to destination: String, with sftp: SFTPClient,
                                            progress: @escaping @Sendable (UInt64) async -> Void) async throws {
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
-        try await sftp.withFile(filePath: destination, flags: [.write, .create, .truncate]) { file in
-            var offset: UInt64 = 0
-            while let data = try input.read(upToCount: Int(chunk)), !data.isEmpty {
-                try await file.write(ByteBuffer(bytes: data), at: offset)
-                offset += UInt64(data.count)
-                await progress(offset)
+        let folder = (destination as NSString).deletingLastPathComponent
+        let name = (destination as NSString).lastPathComponent
+        let temporary = (folder.isEmpty ? "" : folder + "/") + ".\(name).clavra-\(UUID().uuidString.prefix(8))"
+        let existing = try? await sftp.getAttributes(at: destination)
+        do {
+            try await sftp.withFile(filePath: temporary, flags: [.write, .create, .truncate]) { file in
+                var offset: UInt64 = 0
+                while let data = try input.read(upToCount: Int(chunk)), !data.isEmpty {
+                    try await file.write(ByteBuffer(bytes: data), at: offset)
+                    offset += UInt64(data.count)
+                    await progress(offset)
+                }
             }
+            if let mode = existing?.permissions {
+                var attributes = SFTPFileAttributes()
+                attributes.permissions = mode & 0o7777
+                try? await sftp.setAttributes(at: temporary, to: attributes)
+            }
+            do {
+                try await sftp.rename(at: temporary, to: destination)
+            } catch where existing != nil {
+                // SFTP v3 won't rename over a file; take the old one away first.
+                try await sftp.remove(at: destination)
+                try await sftp.rename(at: temporary, to: destination)
+            }
+        } catch {
+            try? await sftp.remove(at: temporary)
+            throw error
         }
     }
 
@@ -365,10 +422,12 @@ final class FileBrowser {
                                                    progress: @escaping @Sendable (UInt64) async -> Void) async throws {
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         let names = try await sftp.listDirectory(atPath: source).flatMap(\.components)
-        for component in names where component.filename != "." && component.filename != ".." {
+        for component in names where SafeNames.isSafe(component.filename) {
             let type = (component.attributes.permissions ?? 0) & 0o170000
             let path = source + "/" + component.filename
-            let local = target.appending(path: component.filename)
+            // A file with this name may already be there from a half-finished download; never write
+            // anywhere but inside the new folder.
+            guard let local = SafeNames.contained(unused(target.appending(path: component.filename)), in: target) else { continue }
             if type == 0o040000 {
                 try await downloadFolder(path, to: local, with: sftp, counter: counter, progress: progress)
             } else if type == 0o100000 || type == 0 {
