@@ -16,6 +16,7 @@ struct HostEditor: View {
     @State private var tab = Tab.basics
     @State private var newLocal = ""
     @State private var newRemote = ""
+    @State private var newKind = Server.Forward.Kind.local
 
     private enum Tab: CaseIterable { case basics, more }
 
@@ -28,8 +29,8 @@ struct HostEditor: View {
             HStack {
                 Text(isNew ? "New Host" : "Edit Host").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
                 Spacer()
-                Segments(options: Tab.allCases, selection: $tab) { $0 == .basics ? "Basics" : "Jump, Ports, Guard" }
-                    .frame(width: 250)
+                Segments(options: Tab.allCases, selection: $tab) { $0 == .basics ? "Basics" : "More" }
+                    .frame(width: 170)
             }
 
             if tab == .basics { basics } else { more }
@@ -124,13 +125,10 @@ struct HostEditor: View {
                 .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
         }
 
-        section("Forward ports when connected") {
+        section("Tunnels when connected") {
             ForEach($server.forwards) { $forward in
                 HStack(spacing: 8) {
-                    Text("localhost:\(String(forward.localPort))").font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.ink)
-                    Image(systemName: "arrow.right").font(.system(size: 9.5)).foregroundStyle(Theme.tertiary)
-                    Text(forward.host == "localhost" ? "server:\(String(forward.port))" : "\(forward.host):\(String(forward.port))")
-                        .font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.secondary)
+                    Text(verbatim: forward.summary).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.ink)
                     Spacer()
                     Toggle("Automatic", isOn: $forward.automatic).toggleStyle(.checkbox).font(.system(size: 11.5))
                         .help("Open as soon as the session connects")
@@ -142,11 +140,20 @@ struct HostEditor: View {
                 .frame(height: 26)
             }
             HStack(spacing: 6) {
-                SoftField("Mac port", text: $newLocal, mono: true).frame(width: 100)
-                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                SoftField("port, or host:port", text: $newRemote, mono: true)
-                Button("Add", action: addForward).buttonStyle(QuietButtonStyle()).disabled(parsedRemote == nil)
+                Picker("", selection: $newKind) {
+                    Text("To server").tag(Server.Forward.Kind.local)
+                    Text("To Mac").tag(Server.Forward.Kind.remote)
+                    Text("SOCKS").tag(Server.Forward.Kind.socks)
+                }
+                .labelsHidden().fixedSize()
+                ForwardFields(kind: newKind, local: $newLocal, remote: $newRemote)
+                Button("Add", action: addForward).buttonStyle(QuietButtonStyle())
+                    .disabled(ForwardFields.parse(kind: newKind, local: newLocal, remote: newRemote) == nil)
             }
+        }
+
+        section("When the shell is up, type") {
+            SoftField("cd /srv/app && tmux attach -t main", text: $server.startup, mono: true)
         }
 
         section("Risky commands") {
@@ -155,20 +162,21 @@ struct HostEditor: View {
             Text("rm -rf, DROP TABLE, shutdown, docker rm and the like wait for a yes. On by default for production.")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
         }
-    }
 
-    private var parsedRemote: (host: String, port: Int)? {
-        let text = newRemote.trimmingCharacters(in: .whitespaces)
-        if let port = Int(text), port > 0 { return ("localhost", port) }
-        guard let colon = text.lastIndex(of: ":"), let port = Int(text[text.index(after: colon)...]), port > 0 else { return nil }
-        let host = String(text[..<colon])
-        return host.isEmpty ? nil : (host, port)
+        section("Notes") {
+            TextEditor(text: $server.notes)
+                .font(.system(size: 12.5))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 64)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+        }
     }
 
     private func addForward() {
-        guard let target = parsedRemote else { return }
-        let local = Int(newLocal.trimmingCharacters(in: .whitespaces)) ?? target.port
-        server.forwards.append(Server.Forward(localPort: local, host: target.host, port: target.port))
+        guard let forward = ForwardFields.parse(kind: newKind, local: newLocal, remote: newRemote) else { return }
+        server.forwards.append(forward)
         newLocal = ""
         newRemote = ""
     }

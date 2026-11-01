@@ -8,6 +8,8 @@ struct FilesPanel: View {
     @State private var renaming: FileBrowser.Entry?
     @State private var deleting: FileBrowser.Entry?
     @State private var newFolder = false
+    @State private var newFile = false
+    @State private var permissions: FileBrowser.Entry?
     @State private var name = ""
     @State private var dropping = false
     @State private var selection: FileBrowser.Entry.ID?
@@ -43,6 +45,12 @@ struct FilesPanel: View {
         .sheet(isPresented: $newFolder) {
             NameSheet(title: "New Folder", action: "Create", name: "") { new in Task { await browser.makeFolder(new) } }
         }
+        .sheet(isPresented: $newFile) {
+            NameSheet(title: "New File", action: "Create", name: "") { new in Task { await browser.makeFile(new) } }
+        }
+        .sheet(item: $permissions) { entry in
+            PermissionsSheet(entry: entry) { mode in Task { await browser.setPermissions(entry, to: mode) } }
+        }
         .confirmationDialog(deleting.map { "Delete \($0.name)?" } ?? "", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             presenting: deleting) { entry in
             Button("Delete", role: .destructive) { Task { await browser.delete(entry) } }
@@ -58,7 +66,14 @@ struct FilesPanel: View {
                 Spacer()
                 iconButton("arrow.up", help: "Enclosing folder") { Task { await browser.up() } }
                 iconButton("arrow.clockwise", help: "Refresh") { Task { await browser.load() } }
-                iconButton("folder.badge.plus", help: "New folder") { newFolder = true }
+                Menu {
+                    Button("New Folder…") { newFolder = true }
+                    Button("New File…") { newFile = true }
+                } label: {
+                    Image(systemName: "plus").font(.system(size: 11.5)).foregroundStyle(Theme.secondary).frame(width: 24, height: 24)
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .help("New folder or file")
                 iconButton("square.and.arrow.up", help: "Upload files") { chooseUploads() }
                 iconButton(browser.showsHidden ? "eye" : "eye.slash", help: "Show hidden files") { browser.showsHidden.toggle() }
             }
@@ -93,13 +108,15 @@ struct FilesPanel: View {
                 ForEach(browser.visible) { entry in
                     FileRow(entry: entry, isSelected: selection == entry.id)
                         .onTapGesture(count: 2) {
-                            if entry.isFolder || entry.isLink { Task { await browser.open(entry) } } else { browser.download(entry) }
+                            if entry.isFolder || entry.isLink { Task { await browser.open(entry) } } else { browser.edit(entry) }
                         }
                         .simultaneousGesture(TapGesture().onEnded { selection = entry.id })
                         .contextMenu {
                             if entry.isFolder {
                                 Button("Open") { Task { await browser.open(entry) } }
+                                Button("Download Folder") { browser.download(entry) }
                             } else {
+                                Button("Edit on This Mac") { browser.edit(entry) }
                                 Button("Download") { browser.download(entry) }
                             }
                             Button("Copy Path") {
@@ -111,12 +128,13 @@ struct FilesPanel: View {
                                 session.type("cd " + Self.quoted(path), run: true)
                             }
                             Divider()
+                            Button("Permissions…") { permissions = entry }
                             Button("Rename…") { renaming = entry }
                             Button("Delete…", role: .destructive) { deleting = entry }
                         }
                 }
                 if !browser.loading, browser.error == nil, browser.visible.isEmpty, !browser.path.isEmpty {
-                    Text("Empty folder. Drop files here to upload.").font(.system(size: 12)).foregroundStyle(Theme.tertiary).padding(20)
+                    Text("Empty folder. Drop files or folders here to upload.").font(.system(size: 12)).foregroundStyle(Theme.tertiary).padding(20)
                 }
             }
             .padding(6)
@@ -136,11 +154,14 @@ struct FilesPanel: View {
             ForEach(browser.transfers.prefix(4)) { transfer in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Image(systemName: transfer.direction == .up ? "arrow.up" : "arrow.down").font(.system(size: 9.5, weight: .semibold))
+                        Image(systemName: transfer.direction == .up ? "arrow.up" : transfer.direction == .down ? "arrow.down" : "pencil")
+                            .font(.system(size: 9.5, weight: .semibold))
                         Text(transfer.name).lineLimit(1).truncationMode(.middle)
                         Spacer()
                         if let failed = transfer.failed {
                             Text("failed").foregroundStyle(Theme.color(for: .production)).help(failed)
+                        } else if transfer.direction == .editing {
+                            Text(transfer.done == 0 ? "open, saves upload" : "saved \(transfer.done)×")
                         } else if transfer.finished {
                             Text("done")
                         } else {
@@ -149,7 +170,7 @@ struct FilesPanel: View {
                     }
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.secondary)
-                    if !transfer.finished, let fraction = transfer.fraction {
+                    if !transfer.finished, transfer.direction != .editing, let fraction = transfer.fraction {
                         ProgressView(value: fraction).progressViewStyle(.linear).tint(Theme.brass).controlSize(.mini)
                     }
                 }
@@ -206,6 +227,10 @@ private struct FileRow: View {
                 .frame(width: 16)
             Text(entry.name).font(.system(size: 12.5)).foregroundStyle(Theme.ink).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 6)
+            if let mode = entry.mode {
+                Text(mode).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.tertiary.opacity(0.8))
+                    .opacity(hovering ? 1 : 0)
+            }
             if !entry.isFolder, let size = entry.size {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(Theme.tertiary)
@@ -217,6 +242,46 @@ private struct FileRow: View {
             .fill(isSelected ? Theme.card : hovering ? Theme.card.opacity(0.5) : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+    }
+}
+
+/// Read, write, run for owner, group and everyone, as checkboxes, with the octal alongside.
+private struct PermissionsSheet: View {
+    var entry: FileBrowser.Entry
+    var save: (UInt32) -> Void
+    @State private var mode: UInt32 = 0o644
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Permissions for \(entry.name)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                GridRow {
+                    Text("")
+                    ForEach(["Read", "Write", "Run"], id: \.self) { Text($0).font(.system(size: 11)).foregroundStyle(Theme.tertiary) }
+                }
+                ForEach(Array(["Owner", "Group", "Everyone"].enumerated()), id: \.offset) { row, who in
+                    GridRow {
+                        Text(who).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
+                        ForEach(0..<3, id: \.self) { column in
+                            let bit = UInt32(1) << UInt32(8 - (row * 3 + column))
+                            Toggle("", isOn: Binding(get: { mode & bit != 0 }, set: { mode = $0 ? mode | bit : mode & ~bit }))
+                                .toggleStyle(.checkbox).labelsHidden()
+                        }
+                    }
+                }
+            }
+            Text(String(mode, radix: 8)).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.tertiary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(QuietButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Apply") { save(mode); dismiss() }.buttonStyle(BrassButtonStyle()).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(width: 340)
+        .background(Theme.window)
+        .onAppear { mode = (entry.permissions ?? 0o644) & 0o777 }
     }
 }
 

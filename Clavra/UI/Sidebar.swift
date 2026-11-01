@@ -87,7 +87,7 @@ private struct HostRow: View {
 
     var body: some View {
         Button {
-            if let openSession { model.selection = openSession.id } else { model.open(server) }
+            if let openSession { model.focus(openSession) } else { model.open(server) }
         } label: {
             HStack(spacing: 10) {
                 HostTile(server: server)
@@ -125,9 +125,15 @@ private struct HostRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .help(server.notes)
         .contextMenu {
             Button("Open in New Tab") { model.open(server) }
             Button("Edit…") { model.editing = server }
+            Button("Duplicate") { model.store.save(server.duplicate()) }
+            Button("Copy ssh Command") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(model.sshCommand(for: server), forType: .string)
+            }
             Divider()
             Button("Delete", role: .destructive) { model.store.delete(server) }
         }

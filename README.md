@@ -14,7 +14,19 @@ there is no account. Calm to look at: warm ink in the dark, paper in the light, 
 - Host keys are checked: the first connection shows the SHA-256 fingerprint to trust, and a changed
   key is called out. Keys already in a plain `~/.ssh/known_hosts` line count as trusted.
 - Jump hosts: reach a server through a bastion you've saved, like `ProxyJump`. Both host keys are checked.
+- Sign in with ed25519, RSA or ECDSA (P-256, P-384, P-521; OpenSSH or PEM) keys, or a password.
 - A real terminal (xterm-256color) in tabs. ⇧⌘] and ⇧⌘[ move between them.
+- Split panes like iTerm: ⌘D beside, ⇧⌘D below, ⌥⌘ arrows to move, drag the dividers, ⌘W closes a pane.
+- Suggestions as you type, like zsh-autosuggestions: commands you ran on that host appear in grey
+  after the cursor; → takes them. Clavra's own history stays on this Mac and skips anything that
+  looks like a password; the server's shell history is read at connect and kept in memory only.
+- Find in scrollback (⌘F, ⌘G), font size (⌘+, ⌘-, ⌘0), clear scrollback (⌥⌘K), save output (⇧⌘S).
+- Type into every pane at once (⌥⌘I), with each production pane still asking before risky commands.
+- A dropped connection comes back on its own, tunnels and all, a few times before giving up.
+- The bell bounces the Dock icon and marks the tab when you're elsewhere.
+- Per host: a command to type once the shell is up (`cd /srv/app && tmux attach`), and notes.
+- `ssh://user@host:port` links open in Clavra; a menu bar list opens any saved host in one click;
+  tabs come back after a relaunch.
 
 **Staying safe on production**
 - Return on a risky command (`rm -rf`, `DROP TABLE`, `DELETE` without `WHERE`, `shutdown`,
@@ -29,10 +41,12 @@ there is no account. Calm to look at: warm ink in the dark, paper in the light, 
   channel every 20 seconds. Anything running hot turns coral.
 
 **Ports, files, snippets**
-- Port forwarding (`ssh -L`): Clavra lists the ports the server listens on and forwards one with a
-  click, or opens the tunnels saved with the host on every connect. ⇧⌘P.
-- Files over SFTP beside the terminal: browse, download to ~/Downloads, drop files to upload,
-  rename, new folder, delete. ⇧⌘F.
+- Tunnels, ⇧⌘P: local (`ssh -L`), remote (`ssh -R`) and a SOCKS5 proxy (`ssh -D`), written in
+  Clavra rather than borrowed. The ports the server listens on are offered one click away; tunnels
+  saved with a host open on every connect.
+- Files over SFTP beside the terminal, ⇧⌘F: browse, download files or whole folders to ~/Downloads,
+  drop files or folders to upload, edit a file in any Mac app (each save goes back up),
+  permissions, rename, new file or folder, delete.
 - Snippets: saved commands, typed into the front terminal with ⌘;. Risky ones still ask.
 
 **Keys**
@@ -44,6 +58,8 @@ there is no account. Calm to look at: warm ink in the dark, paper in the light, 
 **Everywhere you work**
 - Optionally keep hosts and snippets in iCloud Drive, so your other Macs see them. Passwords and
   passphrases stay in each Mac's Keychain.
+- Export and import hosts and snippets as one JSON file (never with secrets). Trusted host keys can
+  be reviewed and forgotten in Settings.
 
 ## Build
 
@@ -77,10 +93,12 @@ Debug builds only:
 | `-ClavraKey path` | Key for that session. |
 | `-ClavraPlace production` | Marks it as production. |
 | `-ClavraAutoTrust YES` | Trusts the host key after showing the prompt for 2.5 s. |
-| `-ClavraType 'ls\r'` | Types into the shell once it's up. |
+| `-ClavraType 'ls\r\|ec\e[C'` | Types into the shell once it's up, a key at a time; `\|` pauses, `\e` is Escape. |
 | `-ClavraNewHost YES` | Opens the host editor. |
 | `-ClavraJump user@host:port` | Reaches the session's host through this one. |
-| `-ClavraForward 18080:8080` | Adds a tunnel that opens on connect. |
+| `-ClavraForward 18080:8080,socks:1080,remote:9000:3000` | Adds tunnels that open on connect. |
+| `-ClavraSplit beside,below` | Splits the new tab. |
+| `-ClavraStartup 'cd /srv'` | Sets the command typed once the shell is up. |
 | `-ClavraPanel files` or `ports` | Opens that panel beside the terminal. |
 | `-ClavraSnippets YES` | Opens the snippet palette. |
 | `-ClavraPage keys` or `snippets` | Shows that page instead of "Where to?". |

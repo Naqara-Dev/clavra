@@ -34,6 +34,34 @@ enum KnownHosts {
         try? (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
     }
 
+    /// What Clavra trusts, for Settings: host, key type and fingerprint.
+    struct Trusted: Identifiable, Hashable {
+        var name: String
+        var type: String
+        var fingerprint: String
+        var id: String { name + " " + fingerprint }
+    }
+
+    static func trusted() -> [Trusted] {
+        entries(in: file).map { entry in
+            Trusted(name: entry.names.joined(separator: ", "), type: String(entry.key.split(separator: " ").first ?? ""),
+                    fingerprint: fingerprint(entry.key))
+        }
+    }
+
+    /// Forgets a host's key; the next connection asks again.
+    static func forget(_ trusted: Trusted) {
+        let lines = ((try? String(contentsOf: file, encoding: .utf8)) ?? "")
+            .split(separator: "\n").map(String.init)
+            .filter { line in
+                let parts = line.split(separator: " ")
+                guard parts.count >= 3 else { return true }
+                return !(String(parts[0]) == trusted.name.replacingOccurrences(of: ", ", with: ",")
+                         && fingerprint("\(parts[1]) \(parts[2])") == trusted.fingerprint)
+            }
+        try? (lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")).write(to: file, atomically: true, encoding: .utf8)
+    }
+
     /// `SHA256:…`, the same fingerprint `ssh` prints.
     static func fingerprint(_ key: String) -> String {
         let parts = key.split(separator: " ")

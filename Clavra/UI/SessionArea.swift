@@ -1,16 +1,16 @@
 import SwiftTerm
 import SwiftUI
 
-/// Open tabs as soft pills, the front session's terminal, and a quiet status line.
+/// Open tabs as soft pills, the front tab's panes, and a quiet status line for the focused one.
 struct SessionArea: View {
     @Bindable var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
             TabStrip(model: model)
-            if let session = model.current {
-                SessionPane(session: session, model: model)
-                    .id(session.id)
+            if let tab = model.currentTab, let session = model.current {
+                TabContent(tab: tab, focused: session, model: model)
+                    .id(tab.id)
             }
         }
         .background(Theme.window)
@@ -24,9 +24,17 @@ private struct TabStrip: View {
         HStack(spacing: 6) {
             ScrollView(.horizontal) {
                 HStack(spacing: 6) {
-                    ForEach(model.sessions) { session in
-                        Tab(session: session, isFront: session.id == model.selection,
-                            select: { model.selection = session.id }, close: { model.close(session.id) })
+                    ForEach(model.tabs) { tab in
+                        TabPill(tab: tab, model: model, isFront: tab.id == model.selection)
+                            .contextMenu {
+                                if let session = model.session(tab.focused) {
+                                    Button("Duplicate Tab") { model.open(session.server, through: session.jumpServer) }
+                                    Button("Reconnect") { session.connect() }
+                                }
+                                Divider()
+                                Button("Close Other Tabs") { model.closeOthers(than: tab.id) }
+                                Button("Close Tab") { model.closeTab(tab.id) }
+                            }
                     }
                 }
             }
@@ -38,6 +46,20 @@ private struct TabStrip: View {
             .buttonStyle(.plain)
             .help("New connection (⌘T)")
             Spacer(minLength: 0)
+            if model.broadcasting {
+                Button { model.broadcasting = false } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(Theme.brass).frame(width: 6, height: 6)
+                        Text("Typing into every pane").font(.system(size: 11.5, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.brass)
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .background(Capsule().fill(Theme.brass.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help("Stop broadcasting (⌥⌘I)")
+            }
         }
         .padding(.horizontal, 12)
         .frame(height: 48)
@@ -45,26 +67,37 @@ private struct TabStrip: View {
     }
 }
 
-private struct Tab: View {
-    var session: Session
+private struct TabPill: View {
+    var tab: TabGroup
+    var model: AppModel
     var isFront: Bool
-    var select: () -> Void
-    var close: () -> Void
     @State private var hovering = false
 
+    private var panes: [Session] { tab.paneIDs.compactMap(model.session) }
+    private var focused: Session? { model.session(tab.focused) }
+
     private var dot: SwiftUI.Color? {
-        switch session.state {
-        case .connected: session.server.place == .production ? Theme.color(for: .production) : nil
-        case .failed, .closed: Theme.tertiary
-        default: Theme.brass
+        guard let focused else { return nil }
+        if !isFront, panes.contains(where: \.wantsAttention) { return Theme.brass }
+        switch focused.state {
+        case .connected: return panes.contains { $0.server.place == .production } ? Theme.color(for: .production) : nil
+        case .failed, .closed: return Theme.tertiary
+        default: return Theme.brass
         }
     }
 
     var body: some View {
         HStack(spacing: 8) {
             if let dot { Circle().fill(dot).frame(width: 6, height: 6) }
-            Text(session.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1).frame(maxWidth: 180)
-            Button(action: close) {
+            Text(focused?.title ?? "").font(.system(size: 12.5, weight: .medium)).lineLimit(1).frame(maxWidth: 180)
+            if panes.count > 1 {
+                Text(verbatim: "\(panes.count)").font(.system(size: 10.5, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(Theme.tertiary)
+                    .padding(.horizontal, 5)
+                    .background(Capsule().fill(Theme.line))
+                    .help("\(panes.count) panes")
+            }
+            Button { model.closeTab(tab.id) } label: {
                 Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.tertiary)
                     .frame(width: 16, height: 16).contentShape(Rectangle())
             }
@@ -77,14 +110,81 @@ private struct Tab: View {
         .frame(height: 28)
         .background(Capsule().fill(isFront ? Theme.card : hovering ? Theme.card.opacity(0.5) : .clear))
         .contentShape(Capsule())
-        .onTapGesture(perform: select)
+        .onTapGesture { model.selection = tab.id }
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: isFront)
     }
 }
 
-private struct SessionPane: View {
+/// The tab's panes, the side panel for the focused one, and its status line.
+private struct TabContent: View {
+    var tab: TabGroup
+    var focused: Session
+    @Bindable var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                PaneTree(node: tab.root, tab: tab, model: model)
+
+                if let panel = model.sidePanel, focused.isLive {
+                    Rectangle().fill(Theme.line).frame(width: 1)
+                    Group {
+                        switch panel {
+                        case .files: FilesPanel(session: focused)
+                        case .ports: PortsPanel(session: focused, model: model)
+                        }
+                    }
+                    .id(focused.id)
+                    .frame(width: 320)
+                    .background(Theme.window)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: model.sidePanel)
+
+            StatusLine(session: focused, model: model)
+        }
+    }
+}
+
+/// Splits nest, so the tree draws itself; dividers can be dragged.
+private struct PaneTree: View {
+    var node: PaneNode
+    var tab: TabGroup
+    var model: AppModel
+
+    var body: some View {
+        switch node {
+        case .leaf(let id):
+            if let session = model.session(id) {
+                PaneLeaf(session: session, isFocused: tab.focused == id, isSplit: tab.isSplit, model: model)
+                    .id(id)
+            }
+        case .split(let axis, let children):
+            if axis == .sideBySide {
+                HSplitView {
+                    ForEach(children, id: \.ids) { child in
+                        AnyView(PaneTree(node: child, tab: tab, model: model)).frame(minWidth: 240, maxWidth: .infinity)
+                    }
+                }
+            } else {
+                VSplitView {
+                    ForEach(children, id: \.ids) { child in
+                        AnyView(PaneTree(node: child, tab: tab, model: model)).frame(minHeight: 120, maxHeight: .infinity)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One terminal, with whatever it's asking or showing on top. In a split, the panes without the
+/// keyboard step back a little.
+private struct PaneLeaf: View {
     var session: Session
+    var isFocused: Bool
+    var isSplit: Bool
     @Bindable var model: AppModel
 
     var body: some View {
@@ -93,51 +193,44 @@ private struct SessionPane: View {
                 HStack(spacing: 8) {
                     Circle().fill(Theme.color(for: .production)).frame(width: 6, height: 6)
                     Text("Production").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.color(for: .production))
-                    Text("Take care: this server is live.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    if !isSplit {
+                        Text("Take care: this server is live.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    } else {
+                        Text(session.server.title).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    }
                     Spacer()
                 }
-                .padding(.horizontal, 18)
-                .frame(height: 30)
+                .padding(.horizontal, isSplit ? 12 : 18)
+                .frame(height: isSplit ? 24 : 30)
                 .background(Theme.color(for: .production).opacity(0.07))
             }
 
-            HStack(spacing: 0) {
-                ZStack {
-                    Theme.terminal
-                    TerminalPane(session: session)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .opacity(session.state == .connected || session.state == .closed ? 1 : 0.25)
-                    overlay
-                    if let held = session.held {
-                        HeldCommandPrompt(server: session.server, held: held) { session.release(run: $0) }
-                    }
-                    if model.showingSnippets, session.isLive {
-                        SnippetPalette(store: model.snippets) { snippet in
-                            model.showingSnippets = false
-                            if let snippet { session.type(snippet.command, run: snippet.runs) } else { session.refocus() }
-                        }
-                    }
+            ZStack {
+                Theme.terminal
+                TerminalPane(session: session, isFocused: isFocused)
+                    .padding(.horizontal, isSplit ? 10 : 14)
+                    .padding(.vertical, isSplit ? 8 : 10)
+                    .opacity(session.dimsTerminal ? 0.25 : 1)
+                if isSplit && !isFocused {
+                    Theme.terminal.opacity(0.45).allowsHitTesting(false)
                 }
-                .animation(.easeOut(duration: 0.2), value: session.state)
-                .animation(.easeOut(duration: 0.15), value: session.held)
-
-                if let panel = model.sidePanel, session.isLive {
-                    Rectangle().fill(Theme.line).frame(width: 1)
-                    Group {
-                        switch panel {
-                        case .files: FilesPanel(session: session)
-                        case .ports: PortsPanel(session: session, model: model)
-                        }
+                overlay
+                if let held = session.held {
+                    HeldCommandPrompt(server: session.server, held: held) { session.release(run: $0) }
+                }
+                if isFocused, model.showingFind {
+                    FindBar(session: session, text: $model.lastFind) { model.showingFind = false; session.refocus() }
+                }
+                if isFocused, model.showingSnippets, session.isLive {
+                    SnippetPalette(store: model.snippets) { snippet in
+                        model.showingSnippets = false
+                        if let snippet { session.type(snippet.command, run: snippet.runs) } else { session.refocus() }
                     }
-                    .frame(width: 320)
-                    .background(Theme.window)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .animation(.easeOut(duration: 0.18), value: model.sidePanel)
-
-            StatusLine(session: session, model: model)
+            .animation(.easeOut(duration: 0.2), value: session.state)
+            .animation(.easeOut(duration: 0.15), value: session.held)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
         }
     }
 
@@ -149,6 +242,18 @@ private struct SessionPane: View {
                     ProgressView().controlSize(.small)
                     Text("Connecting to \(session.server.target)…").font(.system(size: 13)).foregroundStyle(Theme.ink)
                 }
+            }
+        case .reconnecting(let attempt):
+            VStack {
+                Spacer()
+                Notice {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Connection lost. Trying again (\(attempt) of 4)…").font(.system(size: 13)).foregroundStyle(Theme.ink)
+                        Button("Stop") { session.close() }.buttonStyle(QuietButtonStyle())
+                    }
+                }
+                .padding(.bottom, 18)
             }
         case .askingHostKey(let question):
             HostKeyPrompt(server: session.server, question: question) { session.answerHostKey($0) }
@@ -252,6 +357,7 @@ private struct StatusLine: View {
             case .connected: Text("connected")
             case .closed: Text("ended")
             case .failed: Text("not connected")
+            case .reconnecting: Text("reconnecting")
             default: Text("connecting")
             }
             if session.isLive, let stats = session.stats { Vitals(stats: stats) }
@@ -328,6 +434,57 @@ private struct PanelButton: View {
     }
 }
 
+/// ⌘F over the terminal: Return finds the next match, ⇧Return the one before.
+private struct FindBar: View {
+    var session: Session
+    @Binding var text: String
+    var close: () -> Void
+    @State private var missing = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack {
+            HStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
+                    TextField("Find in scrollback", text: $text)
+                        .textFieldStyle(.plain).font(.system(size: 13)).frame(width: 200)
+                        .focused($focused)
+                        .onSubmit { search(backwards: NSEvent.modifierFlags.contains(.shift)) }
+                        .onKeyPress(.escape) { close(); return .handled }
+                    if missing { Text("No match").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary) }
+                    button("chevron.up") { search(backwards: true) }
+                    button("chevron.down") { search(backwards: false) }
+                    button("xmark", action: close)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.card))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+                .shadow(color: .black.opacity(0.2), radius: 14, y: 6)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 14)
+            Spacer()
+        }
+        .onAppear { focused = true }
+        .onChange(of: text) { missing = false }
+    }
+
+    private func search(backwards: Bool) {
+        missing = !session.find(text, backwards: backwards)
+    }
+
+    private func button(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.secondary)
+                .frame(width: 20, height: 20).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// Return was pressed on a risky command on a guarded host; nothing has gone to the server yet.
 private struct HeldCommandPrompt: View {
     var server: Server
@@ -364,12 +521,15 @@ private struct HeldCommandPrompt: View {
 /// The session's SwiftTerm view, kept alive across tab switches.
 struct TerminalPane: NSViewRepresentable {
     var session: Session
+    var isFocused = true
 
     func makeNSView(context: Context) -> TerminalView { session.terminal }
 
     func updateNSView(_ view: TerminalView, context: Context) {
-        guard session.state == .connected else { return }
+        guard session.state == .connected, isFocused else { return }
         DispatchQueue.main.async {
+            // Leave the find bar or the snippet field alone while someone is typing in it.
+            if let editor = view.window?.firstResponder as? NSTextView, editor.isFieldEditor { return }
             if view.window?.firstResponder !== view { view.window?.makeFirstResponder(view) }
         }
     }

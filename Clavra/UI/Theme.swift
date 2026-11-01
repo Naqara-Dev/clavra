@@ -54,9 +54,21 @@ enum TerminalStyle {
         0x5A5660, 0xEE9A8F, 0xA9D9B9, 0xE6C68A, 0xA8C6E8, 0xD6B5E4, 0xA4DCD8, 0xF2EFE8,
     ]
 
+    static let defaultFontSize: CGFloat = 13
+
+    static var fontSize: CGFloat {
+        get { (UserDefaults.standard.object(forKey: "FontSize") as? Double).map { CGFloat($0) } ?? defaultFontSize }
+        set { UserDefaults.standard.set(Double(min(max(newValue, 9), 28)), forKey: "FontSize") }
+    }
+
+    @MainActor
+    static func setFont(on view: TerminalView) {
+        view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    }
+
     @MainActor
     static func apply(to view: TerminalView) {
-        view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        setFont(on: view)
         view.nativeBackgroundColor = NSColor(hex: 0x121114)
         view.nativeForegroundColor = NSColor(hex: 0xE6E3DC)
         view.caretColor = NSColor(hex: 0xD8B46C)

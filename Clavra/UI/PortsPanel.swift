@@ -7,6 +7,7 @@ struct PortsPanel: View {
     @Bindable var model: AppModel
     @State private var local = ""
     @State private var remote = ""
+    @State private var kind = Server.Forward.Kind.local
 
     private var suggestions: [Int] {
         (session.stats?.ports ?? []).filter { !session.forwards.isOpen(remotePort: $0) }
@@ -46,13 +47,13 @@ struct PortsPanel: View {
                 }
 
                 section("Add") {
-                    HStack(spacing: 6) {
-                        SoftField("Mac port", text: $local, mono: true).frame(width: 96)
-                        Image(systemName: "arrow.right").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                        SoftField("host:port or port", text: $remote, mono: true)
+                    Segments(options: Server.Forward.Kind.allCases, selection: $kind) {
+                        switch $0 { case .local: "To server"; case .remote: "To Mac"; case .socks: "SOCKS" }
                     }
-                    Button("Forward") { addManual() }.buttonStyle(QuietButtonStyle()).disabled(parsedRemote == nil)
-                    Text("localhost on the right means the server itself. Use another host name to reach a machine behind it.")
+                    ForwardFields(kind: kind, local: $local, remote: $remote)
+                    Button(kind == .socks ? "Start Proxy" : "Forward") { addManual() }
+                        .buttonStyle(QuietButtonStyle()).disabled(ForwardFields.parse(kind: kind, local: local, remote: remote) == nil)
+                    Text(ForwardFields.note(kind))
                         .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -60,18 +61,10 @@ struct PortsPanel: View {
         }
     }
 
-    private var parsedRemote: (host: String, port: Int)? {
-        let text = remote.trimmingCharacters(in: .whitespaces)
-        if let port = Int(text) { return ("localhost", port) }
-        guard let colon = text.lastIndex(of: ":"), let port = Int(text[text.index(after: colon)...]) else { return nil }
-        let host = String(text[..<colon])
-        return host.isEmpty ? nil : (host, port)
-    }
-
     private func addManual() {
-        guard let target = parsedRemote else { return }
-        let wanted = Int(local.trimmingCharacters(in: .whitespaces)) ?? target.port
-        session.openForward(Server.Forward(localPort: ForwardList.freePort(from: wanted), host: target.host, port: target.port))
+        guard var forward = ForwardFields.parse(kind: kind, local: local, remote: remote) else { return }
+        if forward.kind != .remote { forward.localPort = ForwardList.freePort(from: forward.localPort) }
+        session.openForward(forward)
         local = ""
         remote = ""
     }
@@ -127,12 +120,11 @@ private struct ForwardRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Circle().fill(color).frame(width: 6, height: 6)
-                Text("localhost:\(String(item.forward.localPort))").font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.ink)
-                Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(Theme.tertiary)
-                Text(item.forward.label).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.secondary)
+                Text(verbatim: item.forward.summary).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).truncationMode(.middle)
                 Spacer()
                 Menu {
-                    if case .open = item.status, let url = URL(string: "http://localhost:\(item.forward.localPort)") {
+                    if case .open = item.status, item.forward.kind == .local, let url = URL(string: "http://localhost:\(item.forward.localPort)") {
                         Button("Open in Browser") { NSWorkspace.shared.open(url) }
                         Button("Copy Address") {
                             NSPasteboard.general.clearContents()
@@ -164,6 +156,61 @@ private struct ForwardRow: View {
         case .open: Theme.color(for: .personal)
         case .opening: Theme.brass
         case .failed: Theme.color(for: .production)
+        }
+    }
+}
+
+/// The two fields for a new tunnel, labelled for its kind, and how they read.
+struct ForwardFields: View {
+    var kind: Server.Forward.Kind
+    @Binding var local: String
+    @Binding var remote: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            switch kind {
+            case .local:
+                SoftField("Mac port", text: $local, mono: true).frame(width: 96)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+                SoftField("host:port or port", text: $remote, mono: true)
+            case .remote:
+                SoftField("Server port", text: $remote, mono: true).frame(width: 110)
+                Image(systemName: "arrow.right").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+                SoftField("Mac port, or host:port", text: $local, mono: true)
+            case .socks:
+                SoftField("Mac port, e.g. 1080", text: $local, mono: true)
+            }
+        }
+    }
+
+    static func note(_ kind: Server.Forward.Kind) -> String {
+        switch kind {
+        case .local: "A port on this Mac reaches the server. localhost on the right means the server itself; another name reaches a machine behind it."
+        case .remote: "The server listens on its own loopback and each connection comes back to this Mac, like ssh -R. Handy for webhooks and showing a local app."
+        case .socks: "A SOCKS5 proxy on this Mac, like ssh -D. Point a browser at it and its traffic leaves from the server."
+        }
+    }
+
+    static func parse(kind: Server.Forward.Kind, local: String, remote: String) -> Server.Forward? {
+        func split(_ text: String) -> (host: String, port: Int)? {
+            let text = text.trimmingCharacters(in: .whitespaces)
+            if let port = Int(text), port > 0, port < 65_536 { return ("localhost", port) }
+            guard let colon = text.lastIndex(of: ":"), let port = Int(text[text.index(after: colon)...]), port > 0, port < 65_536 else { return nil }
+            let host = String(text[..<colon])
+            return host.isEmpty ? nil : (host, port)
+        }
+        switch kind {
+        case .local:
+            guard let target = split(remote) else { return nil }
+            let mac = Int(local.trimmingCharacters(in: .whitespaces)) ?? target.port
+            return Server.Forward(kind: .local, localPort: mac, host: target.host, port: target.port)
+        case .remote:
+            guard let serverPort = Int(remote.trimmingCharacters(in: .whitespaces)), serverPort > 0,
+                  let mac = split(local) else { return nil }
+            return Server.Forward(kind: .remote, localPort: mac.port, host: mac.host, port: serverPort)
+        case .socks:
+            guard let mac = Int(local.trimmingCharacters(in: .whitespaces)), mac > 0, mac < 65_536 else { return nil }
+            return Server.Forward(kind: .socks, localPort: mac, port: 0)
         }
     }
 }

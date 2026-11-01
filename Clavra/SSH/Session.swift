@@ -9,6 +9,8 @@ import SwiftTerm
 final class Session: Identifiable {
     enum State: Equatable {
         case connecting
+        /// The connection dropped; trying again on its own.
+        case reconnecting(attempt: Int)
         case askingHostKey(HostKeyQuestion)
         case connected
         case failed(String)
@@ -45,6 +47,10 @@ final class Session: Identifiable {
     private(set) var state: State = .connecting
     private(set) var title: String
     private(set) var held: HeldCommand?
+    /// The bell rang while this tab wasn't in front.
+    var wantsAttention = false
+    /// Typed bytes, handed on so they can go to other tabs too (broadcast).
+    @ObservationIgnored var mirror: ((ArraySlice<UInt8>) -> Void)?
     /// Load, memory and disk, read every so often while connected. Nil until the first reading.
     private(set) var stats: ServerStats?
     let forwards = ForwardList()
@@ -56,6 +62,16 @@ final class Session: Identifiable {
     @ObservationIgnored private var statsTask: Task<Void, Never>?
     @ObservationIgnored private var typed = TypedLine()
     @ObservationIgnored private var browser: FileBrowser?
+    @ObservationIgnored private var ghost: GhostText?
+    @ObservationIgnored private var suggestion: String?
+    /// Saved hosts keep their history under their id; set by the app when the tab opens.
+    @ObservationIgnored var isSavedHost = false
+    private var history: CommandHistory { CommandHistory.of(server, saved: isSavedHost) }
+    /// Automatic attempts since the connection last dropped.
+    @ObservationIgnored private var attempts = 0
+    @ObservationIgnored private var userClosed = false
+    /// Tunnels that were open when the connection dropped, opened again once it's back.
+    @ObservationIgnored private var carried: [Server.Forward] = []
 
     /// The tab's file browser, made on first use so it remembers its folder between visits.
     var files: FileBrowser {
@@ -77,12 +93,24 @@ final class Session: Identifiable {
         TerminalStyle.apply(to: terminal)
         relay.session = self
         terminal.terminalDelegate = relay
+        ghost = GhostText(in: terminal)
     }
 
     var isLive: Bool { state == .connected }
 
+    /// Connecting, asking or failed: the terminal steps back behind the card.
+    var dimsTerminal: Bool {
+        switch state {
+        case .connected, .closed, .reconnecting: false
+        default: true
+        }
+    }
+
     func connect() {
         task?.cancel()
+        attempts = 0
+        carried = []
+        userClosed = false
         state = .connecting
         terminal.feed(text: "\u{1b}[2J\u{1b}[H")
         task = Task { await run() }
@@ -97,6 +125,7 @@ final class Session: Identifiable {
     }
 
     func close() {
+        userClosed = true
         answer?.resume(returning: false)
         answer = nil
         task?.cancel()
@@ -113,7 +142,9 @@ final class Session: Identifiable {
         forwards.closeAll()
         if let sftp = sftpClient { Task { try? await sftp.close() } }
         sftpClient = nil
+        browser?.stopEditing()
         browser = nil
+        hideSuggestion()
         client?.close()
         client = nil
         jumpClient?.close()
@@ -165,13 +196,33 @@ final class Session: Identifiable {
                 terminalCharacterWidth: size.cols, terminalRowHeight: size.rows,
                 terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: SSHTerminalModes([:]))
             state = .connected
+            let wasReconnect = attempts > 0
+            attempts = 0
+            if wasReconnect { terminal.feed(text: "\r\n\u{1b}[2m[Clavra: connected again]\u{1b}[0m\r\n") }
             startWatching()
-            for forward in server.forwards where forward.automatic { forwards.open(forward, through: client) }
+            seedHistory()
+            if !server.startup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let startup = server.startup
+                Task { try? await Task.sleep(for: .milliseconds(700)); self.type(startup, run: true) }
+            }
+            let reopen = server.forwards.filter(\.automatic) + carried.filter { c in !server.forwards.contains { $0.id == c.id && $0.automatic } }
+            carried = []
+            for forward in reopen { forwards.open(forward, through: client) }
             #if DEBUG
-            // `-ClavraType 'ls\r'` types into the shell once it's up, to check input end to end.
+            // `-ClavraType 'ls\r|ec'` types into the shell once it's up, a key at a time, pausing at
+            // each `|`, to check input end to end.
             if let typed = UserDefaults.standard.string(forKey: "ClavraType") {
-                let bytes = Array(typed.replacingOccurrences(of: "\\r", with: "\r").utf8)
-                Task { try? await Task.sleep(for: .seconds(1.5)); self.send(bytes[...]) }
+                Task {
+                    for step in typed.replacingOccurrences(of: "\\r", with: "\r").replacingOccurrences(of: "\\e", with: "\u{1b}").split(separator: "|") {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        // An escape sequence goes as one key; everything else a byte at a time.
+                        var keys: [[UInt8]] = []
+                        for byte in step.utf8 {
+                            if let last = keys.last, last.first == 0x1B, last.count < 3 { keys[keys.count - 1].append(byte) } else { keys.append([byte]) }
+                        }
+                        for key in keys { self.typedByUser(key[...]); try? await Task.sleep(for: .milliseconds(30)) }
+                    }
+                }
             }
             #endif
 
@@ -181,6 +232,23 @@ final class Session: Identifiable {
             end(.closed)
         } catch is CancellationError {
         } catch {
+            let wasConnected = state == .connected || { if case .reconnecting = state { true } else { false } }()
+            if state == .connected { carried = forwards.items.map(\.forward) }
+            teardown()
+            // A live session that drops (Wi-Fi change, sleep, a blip) tries again a few times on its
+            // own. Failing to connect in the first place doesn't; that's for the user to look at.
+            if wasConnected, !userClosed, attempts < 4 {
+                attempts += 1
+                state = .reconnecting(attempt: attempts)
+                terminal.feed(text: "\r\n\u{1b}[2m[Clavra: connection lost, trying again]\u{1b}[0m\r\n")
+                let wait = [2, 5, 10, 20][attempts - 1]
+                task = Task {
+                    try? await Task.sleep(for: .seconds(wait))
+                    guard !Task.isCancelled, !self.userClosed else { return }
+                    await self.run()
+                }
+                return
+            }
             end(.failed(Self.describe(error)))
         }
     }
@@ -223,6 +291,7 @@ final class Session: Identifiable {
 
     private func show(_ bytes: [UInt8]) {
         terminal.feed(byteArray: bytes[...])
+        refreshSuggestion()
     }
 
     private func decide(_ text: String, for host: Server, isJump: Bool) async -> Bool {
@@ -245,12 +314,95 @@ final class Session: Identifiable {
 
     fileprivate func send(_ data: ArraySlice<UInt8>) {
         guard held == nil else { return }
-        if server.guardsCommands, data.contains(0x0D) || data.contains(0x0A), let held = riskyCommand(in: data) {
+        let pressesReturn = data.contains(0x0D) || data.contains(0x0A)
+        if server.guardsCommands, pressesReturn, let held = riskyCommand(in: data) {
             self.held = held
             return
         }
+        if data.count == 1, data.first == 0x0D { remember(Self.commandPart(of: screenLine(), strict: true)) }
         typed.feed(data)
         outgoing?.yield(.bytes(Array(data)))
+    }
+
+    // MARK: Suggestions
+
+    private func remember(_ command: String?) {
+        guard let command, CommandHistory.isEnabled else { return }
+        history.record(command)
+    }
+
+    /// → (or ⌃F) at the end of the line takes the suggestion, the way fish and zsh-autosuggestions do.
+    private func acceptsSuggestion(_ data: ArraySlice<UInt8>) -> Bool {
+        guard let suggestion, !suggestion.isEmpty else { return false }
+        let right: [[UInt8]] = [[0x1B, 0x5B, 0x43], [0x1B, 0x4F, 0x43], [0x06]]
+        guard right.contains(Array(data)) else { return false }
+        send(ArraySlice(Array(suggestion.utf8)))
+        hideSuggestion()
+        return true
+    }
+
+    /// Looks at the line under the cursor once the screen has settled.
+    private func refreshSuggestion() {
+        guard CommandHistory.isEnabled, isLive, held == nil else { return hideSuggestion() }
+        let term = terminal.getTerminal()
+        guard !term.isCurrentBufferAlternate else { return hideSuggestion() }
+        let cursor = term.getCursorLocation()
+        let line = term.getLine(row: cursor.y)?.translateToString(trimRight: true) ?? ""
+        guard cursor.x == line.count, let typed = Self.commandPart(of: line, strict: true), !typed.isEmpty,
+              let rest = history.suggestion(for: typed) else { return hideSuggestion() }
+        suggestion = rest
+        ghost?.show(rest, column: cursor.x, row: cursor.y, in: terminal)
+    }
+
+    private func hideSuggestion() {
+        suggestion = nil
+        ghost?.hide()
+    }
+
+    /// The server's own shell history makes suggestions useful from the first command.
+    private func seedHistory() {
+        guard CommandHistory.isEnabled, let client else { return }
+        let history = history
+        Task {
+            let text = try? await Self.exec("tail -n 3000 ~/.zsh_history ~/.bash_history 2>/dev/null | grep -v '^==>' ; true", on: client)
+            if let text { history.seed(text) }
+        }
+    }
+
+    /// Bytes from another tab while broadcasting. They go through this tab's own guard.
+    func receiveBroadcast(_ data: ArraySlice<UInt8>) {
+        guard isLive else { return }
+        send(data)
+    }
+
+    fileprivate func typedByUser(_ data: ArraySlice<UInt8>) {
+        if acceptsSuggestion(data) { return }
+        hideSuggestion()
+        send(data)
+        mirror?(data)
+    }
+
+    fileprivate func rang() {
+        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        wantsAttention = true
+    }
+
+    // MARK: Terminal tools
+
+    func find(_ text: String, backwards: Bool = false) -> Bool {
+        guard !text.isEmpty else { return false }
+        return backwards ? terminal.findPrevious(text) : terminal.findNext(text)
+    }
+
+    func clearScrollback() {
+        // Clear screen and scrollback, then ask the shell to draw its prompt again.
+        terminal.feed(text: "\u{1b}[3J\u{1b}[2J\u{1b}[H")
+        if isLive { send([0x0C][...]) }
+    }
+
+    /// Everything in the scrollback as plain text.
+    var transcript: String {
+        String(decoding: terminal.getTerminal().getBufferAsData(), as: UTF8.self)
     }
 
     /// Types text into the shell as if from the keyboard, Return included when `run` is set. Goes
@@ -267,6 +419,7 @@ final class Session: Identifiable {
         guard let held else { return }
         self.held = nil
         if run {
+            if held.bytes == [0x0D] { remember(held.command) }
             typed.feed(held.bytes[...])
             outgoing?.yield(.bytes(held.bytes))
         }
@@ -309,9 +462,29 @@ final class Session: Identifiable {
 
     /// What follows the prompt, so a host called "halt-01" in `deploy@halt-01:~$` isn't read as a command.
     nonisolated static func commandPart(of line: String) -> String {
+        commandPart(of: line, strict: false) ?? line
+    }
+
+    /// Strict: nil when no prompt is found, so a password prompt or a program's own input isn't
+    /// taken for a command line.
+    nonisolated static func commandPart(of line: String, strict: Bool) -> String? {
         let ends = ["$ ", "# ", "% ", "> ", "❯ ", "➜ "].compactMap { line.range(of: $0)?.upperBound }
-        guard let end = ends.min() else { return line }
-        return String(line[end...])
+        guard let end = ends.min() else { return strict ? nil : line }
+        var command = String(line[end...])
+        // Oh My Zsh's ➜ prompt puts the folder, and maybe git, after the arrow:
+        // "➜  app ls", "➜  app git:(main) ls", "➜  app git:(main) ✗ ls".
+        if line.contains("➜ ") {
+            var rest = Substring(command).drop { $0 == " " }
+            if let range = rest.range(of: "✗ ") ?? rest.range(of: ") ") {
+                rest = rest[range.upperBound...]
+            } else if let space = rest.firstIndex(of: " ") {
+                rest = rest[rest.index(after: space)...]
+            } else {
+                return ""
+            }
+            command = String(rest)
+        }
+        return command
     }
 
     fileprivate func resized(cols: Int, rows: Int) {
@@ -401,7 +574,7 @@ private final class TerminalRelay: NSObject, @preconcurrency TerminalViewDelegat
     weak var session: Session?
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        session?.send(data)
+        session?.typedByUser(data)
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
@@ -424,7 +597,7 @@ private final class TerminalRelay: NSObject, @preconcurrency TerminalViewDelegat
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func scrolled(source: TerminalView, position: Double) {}
-    func bell(source: TerminalView) {}
+    func bell(source: TerminalView) { session?.rang() }
     func clipboardRead(source: TerminalView) -> Data? { nil }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}

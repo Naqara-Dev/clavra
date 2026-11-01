@@ -35,6 +35,9 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var forwards: [Forward] = []
     /// Ask before risky commands. Nil follows the place: on for production, off elsewhere.
     var guardOverride: Bool?
+    /// Typed into the shell once it's up, e.g. `cd /srv/app && tmux attach`.
+    var startup = ""
+    var notes = ""
 
     var guardsCommands: Bool { guardOverride ?? (place == .production) }
 
@@ -70,8 +73,19 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     }
 
     /// `localhost:3000` on the Mac reaches `host:port` as seen from the server.
+    /// A tunnel, as `ssh -L`, `-R` or `-D` would make it.
     struct Forward: Identifiable, Codable, Hashable, Sendable {
+        enum Kind: String, Codable, CaseIterable, Sendable {
+            /// A port on the Mac reaches `host:port` from the server.
+            case local
+            /// `port` on the server reaches `host:localPort` from the Mac.
+            case remote
+            /// A SOCKS5 proxy on the Mac; every connection leaves from the server.
+            case socks
+        }
+
         var id = UUID()
+        var kind = Kind.local
         var localPort: Int
         var host = "localhost"
         var port: Int
@@ -79,6 +93,33 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
         var automatic = true
 
         var label: String { host == "localhost" || host == "127.0.0.1" ? ":\(port)" : "\(host):\(port)" }
+
+        /// `localhost:3000 → :3000`, `server:8080 → Mac :3000`, `SOCKS localhost:1080`.
+        var summary: String {
+            switch kind {
+            case .local: "localhost:\(localPort) → \(label)"
+            case .remote: "server:\(port) → Mac \(host == "localhost" ? "" : host):\(localPort)"
+            case .socks: "SOCKS localhost:\(localPort)"
+            }
+        }
+
+        init(kind: Kind = .local, localPort: Int, host: String = "localhost", port: Int, automatic: Bool = true) {
+            self.kind = kind
+            self.localPort = localPort
+            self.host = host
+            self.port = port
+            self.automatic = automatic
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .local
+            localPort = try c.decode(Int.self, forKey: .localPort)
+            host = try c.decodeIfPresent(String.self, forKey: .host) ?? "localhost"
+            port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
+            automatic = try c.decodeIfPresent(Bool.self, forKey: .automatic) ?? true
+        }
     }
 
     init(name: String, address: String, port: Int = 22, user: String) {
@@ -91,7 +132,7 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
 
 extension Server {
     private enum CodingKeys: String, CodingKey {
-        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride
+        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride, startup, notes
     }
 
     /// Every field but the address is optional on disk, so files from older versions (or written by
@@ -110,5 +151,17 @@ extension Server {
         jump = try c.decodeIfPresent(UUID.self, forKey: .jump)
         forwards = try c.decodeIfPresent([Forward].self, forKey: .forwards) ?? []
         guardOverride = try c.decodeIfPresent(Bool.self, forKey: .guardOverride)
+        startup = try c.decodeIfPresent(String.self, forKey: .startup) ?? ""
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+    }
+
+    /// A copy with a new identity, for "Duplicate".
+    func duplicate() -> Server {
+        var copy = self
+        copy.id = UUID()
+        copy.name = title + " copy"
+        copy.lastConnected = nil
+        copy.forwards = forwards.map { var f = $0; f.id = UUID(); return f }
+        return copy
     }
 }

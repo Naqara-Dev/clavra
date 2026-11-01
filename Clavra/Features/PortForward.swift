@@ -4,8 +4,9 @@ import NIOCore
 import NIOPosix
 import NIOSSH
 
-/// The tunnels open in one tab. Each listens on 127.0.0.1 on the Mac and carries every connection to
-/// the server over a `direct-tcpip` channel, the same thing `ssh -L` does.
+/// The tunnels open in one tab. Local ones (`ssh -L`) and the SOCKS proxy (`ssh -D`) listen on
+/// 127.0.0.1 on the Mac and carry each connection to the server over a `direct-tcpip` channel.
+/// Remote ones (`ssh -R`) ask the server to listen and bring its connections back to the Mac.
 @MainActor @Observable
 final class ForwardList {
     enum Status: Equatable {
@@ -22,18 +23,20 @@ final class ForwardList {
 
     private(set) var items: [Item] = []
     @ObservationIgnored private var listeners: [Server.Forward.ID: LocalListener] = [:]
+    @ObservationIgnored private var remotes: [Server.Forward.ID: Task<Void, Never>] = [:]
 
     func isOpen(remotePort: Int) -> Bool {
-        items.contains { $0.forward.port == remotePort && ($0.forward.host == "localhost" || $0.forward.host == "127.0.0.1") }
+        items.contains { $0.forward.kind == .local && $0.forward.port == remotePort && ($0.forward.host == "localhost" || $0.forward.host == "127.0.0.1") }
     }
 
     func open(_ forward: Server.Forward, through client: ClientBox) {
         close(forward.id)
         items.append(Item(forward: forward, status: .opening))
+        if forward.kind == .remote { return openRemote(forward, through: client) }
         Task {
             do {
                 let listener = try await LocalListener.start(port: forward.localPort, host: forward.host,
-                                                             remotePort: forward.port, client: client)
+                                                             remotePort: forward.port, socks: forward.kind == .socks, client: client)
                 guard items.contains(where: { $0.id == forward.id }) else { return listener.close() }
                 listeners[forward.id] = listener
                 set(forward.id, .open)
@@ -43,14 +46,52 @@ final class ForwardList {
         }
     }
 
+    /// The server listens on `port` (its loopback) for as long as the task runs; each connection is
+    /// carried back and dialled from the Mac.
+    private func openRemote(_ forward: Server.Forward, through client: ClientBox) {
+        let id = forward.id
+        remotes[id] = Task { [weak self] in
+            do {
+                try await Self.runRemote(forward, client: client) { [weak self] in await self?.set(id, .open) }
+                self?.set(id, .failed("The server closed this tunnel."))
+            } catch is CancellationError {
+            } catch {
+                let raw = String(describing: error)
+                self?.set(id, .failed(raw.contains("globalRequest") || raw.contains("rejected") || raw.contains("Failure")
+                    ? "The server said no. It may not allow forwarding, or port \(forward.port) is taken there."
+                    : "Couldn't open port \(forward.port) on the server."))
+            }
+        }
+    }
+
+    /// Citadel's own `runRemotePortForward` hands raw channel data to a ByteBuffer pipeline and traps
+    /// on the first connection, so each forwarded channel is wired up here instead.
+    private nonisolated static func runRemote(_ forward: Server.Forward, client: ClientBox,
+                                              opened: @escaping @Sendable () async -> Void) async throws {
+        let (macHost, macPort) = (forward.host, forward.localPort)
+        try await client.client.withRemotePortForward(host: "localhost", port: forward.port, onOpen: { _ in await opened() }) { channel, _ in
+            // The server sends nothing until this future succeeds, so the Mac side is dialled first.
+            channel.pipeline.addHandler(ChannelDataCodec()).flatMap {
+                ClientBootstrap(group: channel.eventLoop).connect(host: macHost, port: macPort)
+            }.flatMap { local in
+                local.pipeline.addHandler(Relay(peer: channel)).flatMap {
+                    channel.pipeline.addHandler(Relay(peer: local))
+                }
+            }
+        }
+    }
+
     func close(_ id: Server.Forward.ID) {
         listeners.removeValue(forKey: id)?.close()
+        remotes.removeValue(forKey: id)?.cancel()
         items.removeAll { $0.id == id }
     }
 
     func closeAll() {
         for listener in listeners.values { listener.close() }
+        for task in remotes.values { task.cancel() }
         listeners = [:]
+        remotes = [:]
         items = []
     }
 
@@ -82,13 +123,14 @@ final class LocalListener: Sendable {
 
     private init(channel: Channel) { self.channel = channel }
 
-    static func start(port: Int, host: String, remotePort: Int, client: ClientBox) async throws -> LocalListener {
+    static func start(port: Int, host: String, remotePort: Int, socks: Bool = false, client: ClientBox) async throws -> LocalListener {
         let bootstrap = ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             // Nothing is read until the tunnel's other end is ready, so no bytes fall on the floor.
             .childChannelOption(ChannelOptions.autoRead, value: false)
             .childChannelInitializer { local in
-                local.pipeline.addHandler(Opener(client: client, host: host, port: remotePort))
+                socks ? local.pipeline.addHandler(SOCKSOpener(client: client))
+                      : local.pipeline.addHandler(Opener(client: client, host: host, port: remotePort))
             }
         let channel = try await bootstrap.bind(host: "127.0.0.1", port: port).get()
         return LocalListener(channel: channel)
@@ -147,6 +189,142 @@ private final class Opener: ChannelInboundHandler, RemovableChannelHandler, @unc
             }
         }
         context.fireChannelActive()
+    }
+}
+
+/// A small SOCKS5 server (RFC 1928, CONNECT only, no auth) in front of each accepted connection.
+/// Once the client names where it wants to go, the rest is the same as a local tunnel.
+private final class SOCKSOpener: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
+
+    private enum Stage { case greeting, request, connecting }
+
+    private let client: ClientBox
+    private var stage = Stage.greeting
+    private var pending = ByteBuffer()
+
+    init(client: ClientBox) { self.client = client }
+
+    func channelActive(context: ChannelHandlerContext) {
+        context.channel.setOption(ChannelOptions.autoRead, value: true).whenComplete { _ in }
+        context.fireChannelActive()
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var incoming = unwrapInboundIn(data)
+        pending.writeBuffer(&incoming)
+        process(context: context)
+    }
+
+    private func process(context: ChannelHandlerContext) {
+        switch stage {
+        case .greeting:
+            // VER, NMETHODS, METHODS…
+            guard pending.readableBytes >= 2, let bytes = pending.getBytes(at: pending.readerIndex, length: 2) else { return }
+            guard bytes[0] == 5 else { return fail(context) }
+            let length = 2 + Int(bytes[1])
+            guard pending.readableBytes >= length else { return }
+            pending.moveReaderIndex(forwardBy: length)
+            context.writeAndFlush(wrapOutboundOut(ByteBuffer(bytes: [5, 0])), promise: nil)
+            stage = .request
+            process(context: context)
+        case .request:
+            // VER, CMD, RSV, ATYP, address, port
+            guard pending.readableBytes >= 5, let head = pending.getBytes(at: pending.readerIndex, length: 5) else { return }
+            guard head[0] == 5, head[1] == 1 else { return reply(context, code: 7) }
+            let addressLength: Int
+            switch head[3] {
+            case 1: addressLength = 4
+            case 3: addressLength = 1 + Int(head[4])
+            case 4: addressLength = 16
+            default: return reply(context, code: 8)
+            }
+            let total = 4 + addressLength + 2
+            guard pending.readableBytes >= total, let request = pending.readBytes(length: total) else { return }
+            let address = Array(request[4..<(4 + addressLength)])
+            let port = Int(request[total - 2]) << 8 | Int(request[total - 1])
+            let host: String
+            switch head[3] {
+            case 1: host = address.map(String.init).joined(separator: ".")
+            case 3: host = String(decoding: address.dropFirst(), as: UTF8.self)
+            default: host = stride(from: 0, to: 16, by: 2).map { String(format: "%x", Int(address[$0]) << 8 | Int(address[$0 + 1])) }.joined(separator: ":")
+            }
+            stage = .connecting
+            connect(context: context, host: host, port: port)
+        case .connecting:
+            break
+        }
+    }
+
+    private func connect(context: ChannelHandlerContext, host: String, port: Int) {
+        let local = context.channel
+        let origin = local.remoteAddress ?? (try? SocketAddress(ipAddress: "127.0.0.1", port: 0))!
+        let client = client
+        let loop = context.eventLoop
+        let promise = loop.makePromise(of: Channel.self)
+        promise.completeWithTask {
+            try await client.client.createDirectTCPIPChannel(
+                using: SSHChannelType.DirectTCPIP(targetHost: host, targetPort: port, originatorAddress: origin)
+            ) { remote in
+                remote.pipeline.addHandler(Relay(peer: local))
+            }
+        }
+        promise.futureResult.whenComplete { result in
+            switch result {
+            case .success(let remote):
+                // Hand the connection to the relay first, so nothing the client sends next is missed,
+                // then pass on anything it already sent, then tell it the way is open.
+                let leftover = self.pending
+                self.pending = ByteBuffer()
+                local.pipeline.addHandler(Relay(peer: remote))
+                    .flatMap { local.pipeline.removeHandler(self) }
+                    .whenComplete { _ in
+                        if leftover.readableBytes > 0, let bytes = leftover.getBytes(at: leftover.readerIndex, length: leftover.readableBytes) {
+                            remote.writeAndFlush(ByteBuffer(bytes: bytes), promise: nil)
+                        }
+                        local.writeAndFlush(ByteBuffer(bytes: [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), promise: nil)
+                    }
+            case .failure:
+                Self.reply(local, code: 5)
+            }
+        }
+    }
+
+    private func reply(_ context: ChannelHandlerContext, code: UInt8) {
+        Self.reply(context.channel, code: code)
+    }
+
+    /// A SOCKS error reply, then hang up.
+    private static func reply(_ channel: Channel, code: UInt8) {
+        channel.writeAndFlush(ByteBuffer(bytes: [5, code, 0, 1, 0, 0, 0, 0, 0, 0])).whenComplete { _ in channel.close(promise: nil) }
+    }
+
+    private func fail(_ context: ChannelHandlerContext) {
+        context.close(promise: nil)
+    }
+}
+
+/// SSH channel data in, plain bytes out, and back. Stderr-type data never comes on a TCP channel.
+private final class ChannelDataCodec: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias InboundOut = ByteBuffer
+    typealias OutboundIn = ByteBuffer
+    typealias OutboundOut = SSHChannelData
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        context.channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).whenComplete { _ in }
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let incoming = unwrapInboundIn(data)
+        guard case .channel = incoming.type, case .byteBuffer(let bytes) = incoming.data else { return }
+        context.fireChannelRead(wrapInboundOut(bytes))
+    }
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        let bytes = unwrapOutboundIn(data)
+        context.write(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(bytes))), promise: promise)
     }
 }
 

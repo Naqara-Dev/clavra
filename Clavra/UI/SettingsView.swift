@@ -1,42 +1,162 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// ⌘, : the few things that are yours to choose.
 struct SettingsView: View {
     var model: AppModel
-    @State private var sync = Library.syncsWithICloud
-    @State private var check = HealthMonitor.isEnabled
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            setting(
-                "Keep hosts and snippets in iCloud Drive",
-                isOn: $sync,
-                note: Library.iCloudAvailable
-                    ? "They sit in a Clavra folder in iCloud Drive, so your other Macs see them. Passwords and passphrases stay in this Mac's Keychain, and keys stay in ~/.ssh."
-                    : "Turn on iCloud Drive in System Settings to use this."
-            )
-            .disabled(!Library.iCloudAvailable)
-            .onChange(of: sync) { model.setICloudSync(sync) }
+        TabView {
+            GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }
+            TerminalSettings(model: model).tabItem { Label("Terminal", systemImage: "terminal") }
+            TrustedHosts().tabItem { Label("Trusted Hosts", systemImage: "checkmark.shield") }
+        }
+        .frame(width: 520)
+    }
+}
 
-            setting(
-                "Check whether hosts are up",
-                isOn: $check,
-                note: "Every five minutes Clavra opens and closes a connection to each host's SSH port to show it's reachable and how fast. Nothing is sent and nobody logs in."
-            )
-            .onChange(of: check) {
-                HealthMonitor.isEnabled = check
-                model.health.restart()
+private struct GeneralSettings: View {
+    var model: AppModel
+    @State private var sync = Library.syncsWithICloud
+    @State private var check = HealthMonitor.isEnabled
+    @State private var restore = AppModel.restoresTabs
+    @AppStorage("MenuBarExtra") private var menuBar = true
+    @State private var note: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            setting("Keep hosts and snippets in iCloud Drive", isOn: $sync,
+                    note: Library.iCloudAvailable
+                        ? "They sit in a Clavra folder in iCloud Drive, so your other Macs see them. Passwords and passphrases stay in this Mac's Keychain, and keys stay in ~/.ssh."
+                        : "Turn on iCloud Drive in System Settings to use this.")
+                .disabled(!Library.iCloudAvailable)
+                .onChange(of: sync) { model.setICloudSync(sync) }
+
+            setting("Check whether hosts are up", isOn: $check,
+                    note: "Every five minutes Clavra opens and closes a connection to each host's SSH port to show it's reachable and how fast. Nothing is sent and nobody logs in.")
+                .onChange(of: check) {
+                    HealthMonitor.isEnabled = check
+                    model.health.restart()
+                }
+
+            setting("Open last session's tabs on launch", isOn: $restore,
+                    note: "Saved hosts that had a tab when Clavra quit connect again.")
+                .onChange(of: restore) { AppModel.restoresTabs = restore }
+
+            setting("Show Clavra in the menu bar", isOn: $menuBar,
+                    note: "Every saved host, one click away, even with the window closed.")
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Backup").font(.system(size: 13, weight: .medium))
+                HStack(spacing: 8) {
+                    Button("Export Hosts and Snippets…", action: export)
+                    Button("Import…", action: importFile)
+                }
+                Text(note ?? "One JSON file. Passwords, passphrases and keys are never in it.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.secondary)
             }
         }
         .padding(24)
-        .frame(width: 480)
-        .background(Theme.window)
     }
 
-    private func setting(_ title: String, isOn: Binding<Bool>, note: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(title, isOn: isOn).toggleStyle(.switch).font(.system(size: 13, weight: .medium))
-            Text(note).font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+    private func export() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Clavra Hosts.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try model.exportBackup(to: url)
+            note = "Saved \(model.store.hosts.count) hosts and \(model.snippets.snippets.count) snippets."
+        } catch {
+            note = "Couldn't save: \(error.localizedDescription)"
         }
+    }
+
+    private func importFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let added = try model.importBackup(from: url)
+            note = "Added \(added.hosts) hosts and \(added.snippets) snippets. Ones you already had were left alone."
+        } catch {
+            note = "That file isn't a Clavra backup."
+        }
+    }
+}
+
+private struct TerminalSettings: View {
+    var model: AppModel
+    @State private var suggest = CommandHistory.isEnabled
+    @State private var forgotten = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Font size").font(.system(size: 13, weight: .medium))
+                Spacer()
+                Text(verbatim: "\(Int(model.fontSize)) pt").monospacedDigit().foregroundStyle(Theme.secondary)
+            }
+            Slider(value: Binding(get: { Double(model.fontSize) }, set: { model.setFontSize(CGFloat($0.rounded())) }), in: 9...28)
+            Text("⌘+ and ⌘- change it from any tab; ⌘0 goes back to 13.")
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            Text("The quick brown fox, ls -la ~/srv")
+                .font(.system(size: model.fontSize, design: .monospaced))
+                .foregroundStyle(SwiftUI.Color(nsColor: NSColor(hex: 0xE6E3DC)))
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.terminal))
+
+            setting("Suggest commands as you type", isOn: $suggest,
+                    note: "Grey text after the cursor shows a command you ran before on that host; → takes it. Commands you run are kept on this Mac, never synced, and ones that look like they hold a password are skipped. The server's own shell history is read when you connect and kept in memory only.")
+                .onChange(of: suggest) { CommandHistory.isEnabled = suggest }
+                .padding(.top, 6)
+            Button(forgotten ? "Forgotten" : "Forget Command History") {
+                CommandHistory.forgetEverything()
+                forgotten = true
+            }
+            .disabled(forgotten)
+        }
+        .padding(24)
+    }
+}
+
+private struct TrustedHosts: View {
+    @State private var list = KnownHosts.trusted()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Server keys you've trusted in Clavra. Forget one and the next connection asks again. Entries in ~/.ssh/known_hosts are read too, but never changed.")
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            List {
+                if list.isEmpty {
+                    Text("Nothing yet.").foregroundStyle(Theme.tertiary)
+                }
+                ForEach(list) { item in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name).font(.system(size: 12.5, weight: .medium))
+                            Text("\(item.type)  \(item.fingerprint)").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.tertiary)
+                                .textSelection(.enabled)
+                        }
+                        Spacer()
+                        Button("Forget") {
+                            KnownHosts.forget(item)
+                            list = KnownHosts.trusted()
+                        }
+                    }
+                }
+            }
+            .frame(height: 260)
+        }
+        .padding(24)
+        .onAppear { list = KnownHosts.trusted() }
+    }
+}
+
+private func setting(_ title: String, isOn: Binding<Bool>, note: String) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+        Toggle(title, isOn: isOn).toggleStyle(.switch).font(.system(size: 13, weight: .medium))
+        Text(note).font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }

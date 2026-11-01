@@ -12,11 +12,19 @@ final class FileBrowser {
         var isLink: Bool
         var size: UInt64?
         var modified: Date?
+        var permissions: UInt32?
         var id: String { name }
+
+        /// `rwxr-xr-x`
+        var mode: String? {
+            guard let permissions else { return nil }
+            let bits = Array("rwxrwxrwx")
+            return String((0..<9).map { permissions & (1 << (8 - $0)) != 0 ? bits[$0] : "-" })
+        }
     }
 
     struct Transfer: Identifiable, Equatable {
-        enum Direction { case up, down }
+        enum Direction { case up, down, editing }
         let id = UUID()
         var name: String
         var direction: Direction
@@ -116,7 +124,8 @@ final class FileBrowser {
                      isFolder: type == 0o040000 || (type == 0 && long.hasPrefix("d")),
                      isLink: type == 0o120000 || long.hasPrefix("l"),
                      size: component.attributes.size,
-                     modified: component.attributes.accessModificationTime?.modificationTime)
+                     modified: component.attributes.accessModificationTime?.modificationTime,
+                     permissions: component.attributes.permissions.map { $0 & 0o7777 })
     }
 
     func join(_ name: String) -> String {
@@ -141,6 +150,21 @@ final class FileBrowser {
         }
     }
 
+    func makeFile(_ name: String) async {
+        await change { sftp in
+            try await sftp.withFile(filePath: self.join(name), flags: [.write, .create, .forceCreate]) { _ in }
+        }
+    }
+
+    /// `0o644` and the like.
+    func setPermissions(_ entry: Entry, to mode: UInt32) async {
+        await change { sftp in
+            var attributes = SFTPFileAttributes()
+            attributes.permissions = mode
+            try await sftp.setAttributes(at: self.join(entry.name), to: attributes)
+        }
+    }
+
     private func change(_ body: @escaping (SFTPClient) async throws -> Void) async {
         do {
             try await body(try await session.sftp())
@@ -152,18 +176,21 @@ final class FileBrowser {
 
     // MARK: Transfers
 
+    /// A file, or a whole folder with everything inside it.
     func download(_ entry: Entry) {
-        guard !entry.isFolder else { return }
         let source = join(entry.name)
         let target = Self.unused(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].appending(path: entry.name))
-        let transfer = Transfer(name: entry.name, direction: .down, total: entry.size)
+        let transfer = Transfer(name: entry.name, direction: .down, total: entry.isFolder ? nil : entry.size)
         transfers.insert(transfer, at: 0)
         Task { [weak self] in
             guard let self else { return }
             do {
                 let sftp = try await session.sftp()
-                try await Self.download(source, to: target, with: sftp) { [weak self] done in
-                    await self?.progress(transfer.id, done)
+                let report: @Sendable (UInt64) async -> Void = { [weak self] done in await self?.progress(transfer.id, done) }
+                if entry.isFolder {
+                    try await Self.downloadFolder(source, to: target, with: sftp, counter: Counter(), progress: report)
+                } else {
+                    try await Self.download(source, to: target, with: sftp, progress: report)
                 }
                 finish(transfer.id, nil)
                 NSWorkspace.shared.activateFileViewerSelecting([target])
@@ -174,18 +201,23 @@ final class FileBrowser {
         }
     }
 
+    /// Files and folders; folders go up with everything inside.
     func upload(_ urls: [URL]) {
-        for url in urls where !url.hasDirectoryPath {
+        for url in urls {
             let destination = join(url.lastPathComponent)
-            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
+            let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let size = isFolder ? Self.folderSize(url) : (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
             let transfer = Transfer(name: url.lastPathComponent, direction: .up, total: size)
             transfers.insert(transfer, at: 0)
             Task { [weak self] in
                 guard let self else { return }
                 do {
                     let sftp = try await session.sftp()
-                    try await Self.upload(url, to: destination, with: sftp) { [weak self] done in
-                        await self?.progress(transfer.id, done)
+                    let report: @Sendable (UInt64) async -> Void = { [weak self] done in await self?.progress(transfer.id, done) }
+                    if isFolder {
+                        try await Self.uploadFolder(url, to: destination, with: sftp, counter: Counter(), progress: report)
+                    } else {
+                        try await Self.upload(url, to: destination, with: sftp, progress: report)
                     }
                     finish(transfer.id, nil)
                     await load()
@@ -208,6 +240,64 @@ final class FileBrowser {
         guard let index = transfers.firstIndex(where: { $0.id == id }) else { return }
         transfers[index].finished = true
         transfers[index].failed = failure
+    }
+
+    // MARK: Editing
+
+    @ObservationIgnored private var editors: [String: Task<Void, Never>] = [:]
+
+    /// Opens the file in the Mac's app for its type. Every save there goes back to the server, for as
+    /// long as this tab is connected.
+    func edit(_ entry: Entry) {
+        guard !entry.isFolder else { return }
+        let source = join(entry.name)
+        editors[source]?.cancel()
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appending(path: "Clavra/Editing/\(UUID().uuidString)", directoryHint: .isDirectory)
+        let local = folder.appending(path: entry.name)
+        var transfer = Transfer(name: entry.name, direction: .editing, total: entry.size)
+        transfer.done = 0
+        transfers.insert(transfer, at: 0)
+        editors[source] = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let sftp = try await session.sftp()
+                try await Self.download(source, to: local, with: sftp) { _ in }
+                NSWorkspace.shared.open(local)
+                var stamp = Self.modified(local)
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .seconds(1))
+                    let now = Self.modified(local)
+                    guard now != stamp else { continue }
+                    stamp = now
+                    let sftp = try await session.sftp()
+                    try await Self.upload(local, to: source, with: sftp) { _ in }
+                    saved(transfer.id)
+                    await load()
+                }
+            } catch is CancellationError {
+            } catch {
+                finish(transfer.id, Self.describe(error))
+            }
+        }
+    }
+
+    /// Stops sending saves back, and cleans up the local copies.
+    func stopEditing() {
+        for task in editors.values { task.cancel() }
+        editors = [:]
+        transfers.removeAll { $0.direction == .editing }
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "Clavra/Editing")
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    private func saved(_ id: Transfer.ID) {
+        if let index = transfers.firstIndex(where: { $0.id == id }) { transfers[index].done += 1 }
+    }
+
+    private nonisolated static func modified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     private nonisolated static let chunk: UInt32 = 256 * 1024
@@ -241,6 +331,80 @@ final class FileBrowser {
                 await progress(offset)
             }
         }
+    }
+
+    /// Running total of bytes moved across a folder's files.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var total: UInt64 = 0
+
+        func add(_ bytes: UInt64) -> UInt64 {
+            lock.lock()
+            defer { lock.unlock() }
+            total += bytes
+            return total
+        }
+
+        func file() -> File { File(counter: self) }
+
+        /// One file's share: turns "this file is at n bytes" into the folder's running total.
+        final class File: @unchecked Sendable {
+            private let counter: Counter
+            private var last: UInt64 = 0
+
+            init(counter: Counter) { self.counter = counter }
+
+            func reached(_ done: UInt64) -> UInt64 {
+                defer { last = done }
+                return counter.add(done - last)
+            }
+        }
+    }
+
+    private nonisolated static func downloadFolder(_ source: String, to target: URL, with sftp: SFTPClient, counter: Counter,
+                                                   progress: @escaping @Sendable (UInt64) async -> Void) async throws {
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let names = try await sftp.listDirectory(atPath: source).flatMap(\.components)
+        for component in names where component.filename != "." && component.filename != ".." {
+            let type = (component.attributes.permissions ?? 0) & 0o170000
+            let path = source + "/" + component.filename
+            let local = target.appending(path: component.filename)
+            if type == 0o040000 {
+                try await downloadFolder(path, to: local, with: sftp, counter: counter, progress: progress)
+            } else if type == 0o100000 || type == 0 {
+                let file = counter.file()
+                try await download(path, to: local, with: sftp) { done in await progress(file.reached(done)) }
+            }
+            // Links, sockets and devices are skipped: following links can loop forever.
+        }
+    }
+
+    private nonisolated static func uploadFolder(_ source: URL, to destination: String, with sftp: SFTPClient, counter: Counter,
+                                                 progress: @escaping @Sendable (UInt64) async -> Void) async throws {
+        do { try await sftp.createDirectory(atPath: destination) } catch {
+            // Already there is fine; anything else shows up on the first file.
+        }
+        let items = try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        for item in items {
+            let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true { continue }
+            let path = destination + "/" + item.lastPathComponent
+            if values?.isDirectory == true {
+                try await uploadFolder(item, to: path, with: sftp, counter: counter, progress: progress)
+            } else {
+                let file = counter.file()
+                try await upload(item, to: path, with: sftp) { done in await progress(file.reached(done)) }
+            }
+        }
+    }
+
+    private nonisolated static func folderSize(_ url: URL) -> UInt64 {
+        let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey])
+        var total: UInt64 = 0
+        while let item = walker?.nextObject() as? URL {
+            total += UInt64((try? item.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+        return total
     }
 
     /// `report.pdf`, then `report 2.pdf`, like Finder.
