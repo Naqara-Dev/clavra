@@ -101,17 +101,43 @@ private struct SessionPane: View {
                 .background(Theme.color(for: .production).opacity(0.07))
             }
 
-            ZStack {
-                Theme.terminal
-                TerminalPane(session: session)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .opacity(session.state == .connected || session.state == .closed ? 1 : 0.25)
-                overlay
-            }
-            .animation(.easeOut(duration: 0.2), value: session.state)
+            HStack(spacing: 0) {
+                ZStack {
+                    Theme.terminal
+                    TerminalPane(session: session)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .opacity(session.state == .connected || session.state == .closed ? 1 : 0.25)
+                    overlay
+                    if let held = session.held {
+                        HeldCommandPrompt(server: session.server, held: held) { session.release(run: $0) }
+                    }
+                    if model.showingSnippets, session.isLive {
+                        SnippetPalette(store: model.snippets) { snippet in
+                            model.showingSnippets = false
+                            if let snippet { session.type(snippet.command, run: snippet.runs) } else { session.refocus() }
+                        }
+                    }
+                }
+                .animation(.easeOut(duration: 0.2), value: session.state)
+                .animation(.easeOut(duration: 0.15), value: session.held)
 
-            StatusLine(session: session)
+                if let panel = model.sidePanel, session.isLive {
+                    Rectangle().fill(Theme.line).frame(width: 1)
+                    Group {
+                        switch panel {
+                        case .files: FilesPanel(session: session)
+                        case .ports: PortsPanel(session: session, model: model)
+                        }
+                    }
+                    .frame(width: 320)
+                    .background(Theme.window)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: model.sidePanel)
+
+            StatusLine(session: session, model: model)
         }
     }
 
@@ -157,7 +183,7 @@ private struct SessionPane: View {
 }
 
 /// A soft floating card over the terminal.
-private struct Notice<Content: View>: View {
+struct Notice<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -178,13 +204,16 @@ private struct HostKeyPrompt: View {
     var body: some View {
         Notice {
             VStack(alignment: .leading, spacing: 12) {
+                if question.isJump {
+                    Text("Through \(question.host) first").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
+                }
                 if question.changed {
                     Text("This server's key changed").font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.color(for: .production))
-                    Text("\(server.address) shows a different key from the one you trusted before. It can happen after a reinstall, but it can also mean someone is in the middle. Only continue if you know why it changed.")
+                    Text("\(question.host) shows a different key from the one you trusted before. It can happen after a reinstall, but it can also mean someone is in the middle. Only continue if you know why it changed.")
                         .font(.system(size: 13)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("First time connecting to \(server.title)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text("First time connecting to \(question.host)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
                     Text("Check this fingerprint with the server's owner, or with `ssh-keygen -lf` on the server. Clavra remembers it once you trust it.")
                         .font(.system(size: 13)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -214,23 +243,121 @@ private struct HostKeyPrompt: View {
 
 private struct StatusLine: View {
     var session: Session
+    @Bindable var model: AppModel
 
     var body: some View {
         HStack(spacing: 14) {
-            Text(session.server.target)
+            Text(session.jumpServer.map { "\(session.server.target) via \($0.title)" } ?? session.server.target)
             switch session.state {
             case .connected: Text("connected")
             case .closed: Text("ended")
             case .failed: Text("not connected")
             default: Text("connecting")
             }
+            if session.isLive, let stats = session.stats { Vitals(stats: stats) }
             Spacer()
+            if session.isLive {
+                let open = session.forwards.items.count
+                PanelButton(title: open > 0 ? "Ports \(open)" : "Ports", icon: "arrow.left.arrow.right", isOn: model.sidePanel == .ports) {
+                    model.sidePanel = model.sidePanel == .ports ? nil : .ports
+                }
+                .help("Forward ports (⇧⌘P)")
+                PanelButton(title: "Files", icon: "folder", isOn: model.sidePanel == .files) {
+                    model.sidePanel = model.sidePanel == .files ? nil : .files
+                }
+                .help("Browse files over SFTP (⇧⌘F)")
+                PanelButton(title: "Snippets", icon: "text.insert", isOn: model.showingSnippets) {
+                    model.showingSnippets.toggle()
+                }
+                .help("Type a saved command (⌘;)")
+            }
         }
         .font(.system(size: 11.5))
         .foregroundStyle(Theme.tertiary)
-        .padding(.horizontal, 18)
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
         .frame(height: 30)
         .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
+    }
+}
+
+/// Load, memory, disk and uptime, quiet unless something is running hot.
+private struct Vitals: View {
+    var stats: ServerStats
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let load = stats.load { reading("load", String(format: "%.2f", load), hot: stats.isLoadHigh) }
+            if let memory = stats.memory { reading("mem", "\(memory)%", hot: stats.isMemoryHigh) }
+            if let disk = stats.disk { reading("disk", "\(disk)%", hot: stats.isDiskHigh) }
+            if let up = stats.uptimeText { Text(up) }
+        }
+        .padding(.leading, 4)
+    }
+
+    private func reading(_ label: String, _ value: String, hot: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+            Text(value).monospacedDigit().foregroundStyle(hot ? Theme.color(for: .production) : Theme.secondary)
+        }
+    }
+}
+
+private struct PanelButton: View {
+    var title: String
+    var icon: String
+    var isOn: Bool
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 10.5, weight: .medium))
+                Text(title)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(isOn ? Theme.ink : Theme.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(isOn ? Theme.card : hovering ? Theme.card.opacity(0.5) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Return was pressed on a risky command on a guarded host; nothing has gone to the server yet.
+private struct HeldCommandPrompt: View {
+    var server: Server
+    var held: Session.HeldCommand
+    var answer: (Bool) -> Void
+
+    var body: some View {
+        let coral = Theme.color(for: .production)
+        Notice {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Circle().fill(coral).frame(width: 7, height: 7)
+                    Text("Run this on \(server.title)?").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+                }
+                Text(held.command)
+                    .font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.ink)
+                    .lineLimit(4).textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
+                Text("\(held.reason). Nothing has been sent yet.")
+                    .font(.system(size: 13)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Don't Run") { answer(false) }.buttonStyle(BrassButtonStyle()).keyboardShortcut(.cancelAction)
+                    Button("Run It") { answer(true) }.buttonStyle(QuietButtonStyle(tint: coral))
+                }
+                .padding(.top, 2)
+            }
+            .frame(width: 420, alignment: .leading)
+        }
     }
 }
 

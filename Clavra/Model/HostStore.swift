@@ -5,14 +5,23 @@ import SwiftUI
 @MainActor @Observable
 final class HostStore {
     private(set) var hosts: [Server] = []
-    private let file = Library.folder.appending(path: "hosts.json")
+    private var file: URL { Library.dataFolder.appending(path: "hosts.json") }
 
     init() {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: file), let saved = try? decoder.decode([Server].self, from: data) {
-            hosts = saved
-        }
+        reload()
+    }
+
+    /// Reads the file again; it may have changed on another Mac through iCloud Drive.
+    func reload() {
+        if let saved = Library.load([Server].self, from: file), saved != hosts { hosts = saved }
+    }
+
+    /// Hosts in the folder Clavra is moving to win; ones only this Mac had are added to them.
+    func merge(_ others: [Server]) {
+        let new = others.filter { other in !hosts.contains { $0.id == other.id } }
+        guard !new.isEmpty else { return }
+        hosts += new
+        persist()
     }
 
     func host(_ id: Server.ID) -> Server? { hosts.first { $0.id == id } }
@@ -24,6 +33,7 @@ final class HostStore {
 
     func delete(_ host: Server) {
         hosts.removeAll { $0.id == host.id }
+        for index in hosts.indices where hosts[index].jump == host.id { hosts[index].jump = nil }
         Keychain.forget(host.id)
         persist()
     }
@@ -100,10 +110,6 @@ final class HostStore {
     }
 
     private func persist() {
-        try? FileManager.default.createDirectory(at: Library.folder, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(hosts) { try? data.write(to: file, options: .atomic) }
+        Library.save(hosts, to: file)
     }
 }

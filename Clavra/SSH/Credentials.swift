@@ -11,6 +11,7 @@ enum ClavraError: LocalizedError {
     case needsPassphrase
     case noPassword
     case hostKeyRejected
+    case notConnected
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +21,7 @@ enum ClavraError: LocalizedError {
         case .needsPassphrase: "This key is protected by a passphrase. Add it in the host's settings."
         case .noPassword: "No password saved for this host. Add it in the host's settings."
         case .hostKeyRejected: "You didn't trust the server's key, so Clavra didn't connect."
+        case .notConnected: "This tab isn't connected right now."
         }
     }
 }

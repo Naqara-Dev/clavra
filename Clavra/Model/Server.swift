@@ -29,6 +29,14 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var keyPath: String?
     var place: Place = .personal
     var lastConnected: Date?
+    /// A saved host to hop through first, like `ProxyJump`.
+    var jump: Server.ID?
+    /// Ports carried from this Mac to the server while a session is open.
+    var forwards: [Forward] = []
+    /// Ask before risky commands. Nil follows the place: on for production, off elsewhere.
+    var guardOverride: Bool?
+
+    var guardsCommands: Bool { guardOverride ?? (place == .production) }
 
     var title: String { name.isEmpty ? address : name }
 
@@ -61,10 +69,46 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
         self.init(name: rest, address: rest, port: port, user: user)
     }
 
+    /// `localhost:3000` on the Mac reaches `host:port` as seen from the server.
+    struct Forward: Identifiable, Codable, Hashable, Sendable {
+        var id = UUID()
+        var localPort: Int
+        var host = "localhost"
+        var port: Int
+        /// Opened as soon as the session connects.
+        var automatic = true
+
+        var label: String { host == "localhost" || host == "127.0.0.1" ? ":\(port)" : "\(host):\(port)" }
+    }
+
     init(name: String, address: String, port: Int = 22, user: String) {
         self.name = name
         self.address = address
         self.port = port
         self.user = user
+    }
+}
+
+extension Server {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride
+    }
+
+    /// Every field but the address is optional on disk, so files from older versions (or written by
+    /// hand) still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        address = try c.decode(String.self, forKey: .address)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 22
+        user = try c.decodeIfPresent(String.self, forKey: .user) ?? NSUserName()
+        auth = try c.decodeIfPresent(Auth.self, forKey: .auth) ?? .key
+        keyPath = try c.decodeIfPresent(String.self, forKey: .keyPath)
+        place = try c.decodeIfPresent(Place.self, forKey: .place) ?? .personal
+        lastConnected = try c.decodeIfPresent(Date.self, forKey: .lastConnected)
+        jump = try c.decodeIfPresent(UUID.self, forKey: .jump)
+        forwards = try c.decodeIfPresent([Forward].self, forKey: .forwards) ?? []
+        guardOverride = try c.decodeIfPresent(Bool.self, forKey: .guardOverride)
     }
 }
