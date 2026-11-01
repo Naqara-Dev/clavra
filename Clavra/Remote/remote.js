@@ -4,12 +4,20 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const [portText, secret] = location.hash.slice(1).split(".");
+  // Two ways in. Through the relay (this page on clavra.naqara.dev): #r=<room>&k=<key>.
+  // Straight to the Mac (this page served by the Mac on the same Wi-Fi): #<port>.<key>.
+  const fragment = location.hash.slice(1);
+  const relayed = fragment.startsWith("r=");
+  const params = new URLSearchParams(relayed ? fragment : "");
+  const [portText, lanSecret] = relayed ? ["", ""] : fragment.split(".");
+  const room = params.get("r") || "";
+  const secret = relayed ? params.get("k") || "" : lanSecret;
   const key = secret ? Uint8Array.from(atob(secret.replace(/-/g, "+").replace(/_/g, "/") + "==".slice(0, (4 - secret.length % 4) % 4)), (c) => c.charCodeAt(0)) : null;
+  const place = relayed ? room : portText; // what this phone's token is filed under
   history.replaceState(null, "", location.pathname); // the key doesn't stay in the address bar
 
   let socket = null, challenge = null, sent = 0, received = 0, stopped = false, token = "";
-  try { token = localStorage.getItem("clavra-token-" + portText) || ""; } catch (e) {}
+  try { token = localStorage.getItem("clavra-token-" + place) || ""; } catch (e) {}
   let cols = 80, rows = [], cursor = [0, 0], typing = false, ctrl = false, fit = true, session = "";
 
   const palette = ["#2a282e", "#e2857a", "#93c7a6", "#d8b46c", "#8fb3dc", "#c7a0d8", "#8ccbc7", "#d9d6cf",
@@ -156,7 +164,7 @@
         break;
       case "token":
         token = message.token;
-        try { localStorage.setItem("clavra-token-" + portText, token); } catch (e) {}
+        try { localStorage.setItem("clavra-token-" + place, token); } catch (e) {}
         break;
       case "sessions": {
         showTerminal();
@@ -195,8 +203,10 @@
   }
 
   function connect() {
-    if (!key || !portText) { intro("Scan the code again", "This link is missing its key. Open Remote Access in Clavra and scan the QR code."); return; }
-    socket = new WebSocket(`ws://${location.hostname}:${portText}`);
+    if (!key || !place) { intro("Scan the code again", "This link is missing its key. Open Phone Access in Clavra and scan the QR code."); return; }
+    socket = relayed
+      ? new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/relay/${room}?role=phone`)
+      : new WebSocket(`ws://${location.hostname}:${portText}`);
     socket.binaryType = "arraybuffer";
     socket.onmessage = (event) => {
       const data = new Uint8Array(event.data);
@@ -214,9 +224,10 @@
       $("dot").classList.add("on");
       handle(message);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       $("dot").classList.remove("on");
       if (stopped) return;
+      if (event.code === 4002 && !challenge) intro("Your Mac isn't there", "Open Clavra on your Mac and turn on Phone Access. This page keeps trying.");
       if ($("intro").hidden) note("Connection lost. Reconnecting…", true);
       challenge = null; sent = 0; received = 0;
       setTimeout(connect, 2000);

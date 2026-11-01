@@ -4,14 +4,15 @@ import CryptoKit
 import Foundation
 import Network
 
-/// Clavra's tabs on a phone, over the local network. Off until you turn it on; the phone scans a QR
-/// code holding this Mac's address and a fresh 256-bit key, and every phone has to be allowed here.
+/// Clavra's tabs on a phone. Off until you turn it on; the phone scans a QR code holding a fresh
+/// 256-bit key, and every phone has to be allowed here.
 ///
-/// The page is plain HTTP (a phone won't trust a certificate this Mac makes up), so everything after
-/// it loads is sealed with ChaCha20-Poly1305 under the key from the QR code. The key sits after the
-/// `#` in the URL and never crosses the network. Each WebSocket gets a random challenge that every
-/// message is bound to, and carries a sequence number, so nothing can be replayed. What this can't
-/// stop is someone on the same network who rewrites the page as it loads; use it on networks you trust.
+/// Two ways in. Through clavra.naqara.dev (the default), the page loads over HTTPS and phone and Mac
+/// meet in a relay room, from anywhere. On the same Wi-Fi only, this Mac serves the page itself over
+/// plain HTTP. Either way, everything is sealed with ChaCha20-Poly1305 under the key from the QR code;
+/// the key sits after the `#` in the URL and never crosses the network, so the relay sees only
+/// ciphertext. Each connection gets a random challenge that every message is bound to, and carries a
+/// sequence number, so nothing can be replayed.
 @MainActor @Observable
 final class RemoteAccess {
     struct Device: Identifiable, Equatable {
@@ -27,6 +28,23 @@ final class RemoteAccess {
     private(set) var problem: String?
     /// Production tabs are view-only from a phone unless this is on.
     var typingInProduction = false
+    /// True while the relay room is open and this Mac is in it.
+    private(set) var relayConnected = false
+
+    /// Through clavra.naqara.dev (any network) or straight to this Mac (same Wi-Fi only).
+    static var throughRelay: Bool {
+        get { UserDefaults.standard.object(forKey: "PhoneRelay") == nil || UserDefaults.standard.bool(forKey: "PhoneRelay") }
+        set { UserDefaults.standard.set(newValue, forKey: "PhoneRelay") }
+    }
+
+    /// The relay's WebSocket origin. `-ClavraRelay ws://127.0.0.1:8790` points Debug builds at
+    /// Tests/relay-mock.js.
+    static var relayOrigin: String {
+        #if DEBUG
+        if let custom = UserDefaults.standard.string(forKey: "ClavraRelay") { return custom }
+        #endif
+        return "wss://clavra.naqara.dev"
+    }
 
     @ObservationIgnored weak var model: AppModel?
     @ObservationIgnored private var page: NWListener?
@@ -40,6 +58,9 @@ final class RemoteAccess {
     @ObservationIgnored private var flush: Task<Void, Never>?
     @ObservationIgnored private var idle: Task<Void, Never>?
     @ObservationIgnored private var lastActivity = Date.now
+    @ObservationIgnored private var relay: RelayClient?
+    /// Relay phone numbers to the links they became.
+    @ObservationIgnored private var relayed: [UInt32: UUID] = [:]
 
     static let idleLimit: TimeInterval = 30 * 60
 
@@ -48,13 +69,14 @@ final class RemoteAccess {
     func start() {
         guard !isOn else { return }
         problem = nil
+        key = SymmetricKey(size: .bits256)
+        tokens = [:]
+        refused = []
+        if Self.throughRelay { return startRelay() }
         guard let address = Self.localAddress() else {
             problem = "This Mac isn't on a local network. Join Wi-Fi first."
             return
         }
-        key = SymmetricKey(size: .bits256)
-        tokens = [:]
-        refused = []
         do {
             let socket = try listener(on: address, webSocket: true)
             let page = try listener(on: address, webSocket: false)
@@ -80,8 +102,12 @@ final class RemoteAccess {
     }
 
     func stop() {
-        for link in links.values { link.connection.cancel() }
+        for link in links.values { link.cancel() }
         links = [:]
+        relay?.stop()
+        relay = nil
+        relayed = [:]
+        relayConnected = false
         devices = []
         page?.cancel()
         socket?.cancel()
@@ -111,9 +137,55 @@ final class RemoteAccess {
     /// Both ports known: the QR code can be drawn.
     private func ready(_ address: String) {
         guard let pagePort = page?.port?.rawValue, let socketPort = socket?.port?.rawValue, url == nil else { return }
-        let secret = key.withUnsafeBytes { Data($0) }.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-        let link = URL(string: "http://\(address):\(pagePort)/#\(socketPort).\(secret)")
+        show(URL(string: "http://\(address):\(pagePort)/#\(socketPort).\(Self.base64url(key.withUnsafeBytes { Data($0) }))"))
+    }
+
+    /// Opens a room on the relay, named after a secret only this Mac knows. Phones find it from the
+    /// QR code: `https://clavra.naqara.dev/connect#r=<room>&k=<key>`.
+    private func startRelay() {
+        let secret = Self.base64url(Data((0..<32).map { _ in UInt8.random(in: 0...255) }))
+        let room = Self.base64url(Data(SHA256.hash(data: Data(secret.utf8))))
+        guard let socketURL = URL(string: "\(Self.relayOrigin)/relay/\(room)?role=mac&s=\(secret)") else { return }
+        let page = Self.relayOrigin.replacingOccurrences(of: "wss://", with: "https://").replacingOccurrences(of: "ws://", with: "http://")
+        let client = RelayClient(url: socketURL)
+        client.onEvent = { [weak self] event in self?.relayEvent(event) }
+        relay = client
+        isOn = true
+        lastActivity = .now
+        watchIdle()
+        client.start()
+        show(URL(string: "\(page)/connect#r=\(room)&k=\(Self.base64url(key.withUnsafeBytes { Data($0) }))"))
+    }
+
+    private func relayEvent(_ event: RelayClient.Event) {
+        switch event {
+        case .connected:
+            relayConnected = true
+            problem = nil
+        case .disconnected(let why):
+            relayConnected = false
+            problem = why
+            // Phones on the relay went with it; they'll come back when the room does.
+            for (_, id) in relayed { links[id]?.cancel(); links.removeValue(forKey: id); devices.removeAll { $0.id == id } }
+            relayed = [:]
+        case .joined(let number):
+            let client = relay
+            let link = Link(write: { data in client?.send(kind: 0, phone: number, data) },
+                            close: { client?.send(kind: 2, phone: number, Data()) })
+            links[link.id] = link
+            relayed[number] = link.id
+            link.write(Data("CLV1".utf8) + link.challenge)
+        case .data(let number, let data):
+            if let id = relayed[number], let link = links[id] { handle(data, from: link) }
+        case .left(let number):
+            if let id = relayed.removeValue(forKey: number) {
+                links.removeValue(forKey: id)
+                devices.removeAll { $0.id == id }
+            }
+        }
+    }
+
+    private func show(_ link: URL?) {
         url = link
         qr = link.flatMap { Self.code(for: $0.absoluteString) }
         #if DEBUG
@@ -157,7 +229,7 @@ final class RemoteAccess {
         tokens = tokens.filter { $0.value != phone || phone.isEmpty }
         for other in links.values where other.id == id || (!phone.isEmpty && other.deviceID == phone) {
             other.send(["t": "bye"], key: key)
-            other.connection.cancel()
+            other.cancel()
             links.removeValue(forKey: other.id)
             devices.removeAll { $0.id == other.id }
         }
@@ -211,7 +283,8 @@ final class RemoteAccess {
     // Only touched on the main queue, where the listeners deliver.
     final class Link: @unchecked Sendable {
         let id = UUID()
-        let connection: NWConnection
+        private let writer: (Data) -> Void
+        private let closer: () -> Void
         let challenge = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
         var deviceID = ""
         var allowed = false
@@ -221,7 +294,23 @@ final class RemoteAccess {
         var seen: [String] = []
         var signature = ""
 
-        init(_ connection: NWConnection) { self.connection = connection }
+        init(write: @escaping (Data) -> Void, close: @escaping () -> Void) {
+            writer = write
+            closer = close
+        }
+
+        /// A phone on this Mac's own listener.
+        convenience init(_ connection: NWConnection) {
+            self.init(write: { data in
+                let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
+                let context = NWConnection.ContentContext(identifier: "frame", metadata: [meta])
+                connection.send(content: data, contentContext: context, isComplete: true, completion: .idempotent)
+            }, close: { connection.cancel() })
+            self.connection = connection
+        }
+
+        /// Only for phones on this Mac's own listener.
+        private(set) var connection: NWConnection?
 
         func send(_ object: [String: Any], key: SymmetricKey) {
             sent += 1
@@ -232,11 +321,9 @@ final class RemoteAccess {
             write(box.combined)
         }
 
-        func write(_ data: Data) {
-            let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
-            let context = NWConnection.ContentContext(identifier: "frame", metadata: [meta])
-            connection.send(content: data, contentContext: context, isComplete: true, completion: .idempotent)
-        }
+        func write(_ data: Data) { writer(data) }
+
+        func cancel() { closer() }
     }
 
     private func accept(_ connection: NWConnection) {
@@ -261,7 +348,7 @@ final class RemoteAccess {
     }
 
     private func receive(on link: Link) {
-        link.connection.receiveMessage { [weak self] data, _, _, error in
+        link.connection?.receiveMessage { [weak self] data, _, _, error in
             MainActor.assumeIsolated {
                 guard let self, error == nil else { return }
                 if let data { self.handle(data, from: link) }
@@ -276,7 +363,7 @@ final class RemoteAccess {
               let message = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
               let number = message["n"] as? Int, number > link.received else {
             // Not sealed with our key, or replayed: this isn't a phone that scanned the code.
-            link.connection.cancel()
+            link.cancel()
             return
         }
         link.received = number
@@ -287,7 +374,7 @@ final class RemoteAccess {
             if link.deviceID == "anonymous" { link.deviceID = "" }
             if refused.contains(link.deviceID) {
                 link.send(["t": "bye"], key: key)
-                return link.connection.cancel()
+                return link.cancel()
             }
             let name = String(((message["name"] as? String) ?? "Phone").prefix(40))
             let known = (message["token"] as? String).map { tokens[$0] != nil } ?? false
@@ -415,6 +502,11 @@ final class RemoteAccess {
             if name.hasPrefix("en") { found.append((name, address)) }
         }
         return found.sorted { $0.name < $1.name }.first?.address
+    }
+
+    static func base64url(_ data: Data) -> String {
+        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     static func code(for text: String) -> NSImage? {

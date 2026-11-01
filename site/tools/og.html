@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Share image for clavra.naqara.dev, 1200 x 630. Serve site/ and screenshot:
+       chrome --headless=new --hide-scrollbars --window-size=1200,630 --virtual-time-budget=4000 \
+         --screenshot=public/og.png http://localhost:8000/tools/og.html -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Schibsted+Grotesk:wght@500;600;700&display=block" rel="stylesheet" />
+    <link rel="stylesheet" href="../public/styles.css" />
+    <style>
+      html, body { width: 1200px; height: 630px; overflow: hidden; margin: 0; }
+      .og { display: grid; grid-template-columns: 1fr 520px; gap: 56px; align-items: center; height: 630px; padding: 0 72px; }
+      .og .brand { font-size: 1.5rem; gap: 14px; }
+      .og .brand img { width: 46px; height: 46px; border-radius: 11px; }
+      .og h1 { margin-top: 44px; font-size: 4.1rem; font-weight: 700; letter-spacing: -0.035em; line-height: 1; }
+      .og p.sub { margin-top: 24px; font-size: 1.3rem; color: var(--text-2); max-width: 26ch; }
+      .og .term__typed, .og .ask { animation: none; }
+      .og .guard__screen { min-height: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="og">
+      <div>
+        <span class="brand"><img src="../public/img/icon-192.png" alt="" /><span>Clavra</span></span>
+        <h1>The SSH client that asks first.</h1>
+        <p class="sub">For the Mac. Free. clavra.naqara.dev</p>
+      </div>
+      <div class="guard">
+        <div class="guard__bar"><span class="place place--production">Production</span> api-prod</div>
+        <div class="guard__screen">
+          <p class="term"><span class="term__prompt">deploy@api-prod:~/app$</span> <span class="term__typed">rm -rf /var/www/releases</span><span class="term__caret"></span></p>
+          <div class="ask">
+            <p class="ask__title"><span class="dot dot--production"></span>Run this on api-prod?</p>
+            <p class="ask__command">rm -rf /var/www/releases</p>
+            <p class="ask__why">Deletes files without asking. Nothing has been sent yet.</p>
+            <div class="ask__buttons">
+              <span class="button button--brass button--small">Don't Run</span>
+              <span class="button button--coral button--small">Run It</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "Clavra",
+  "short_name": "Clavra",
+  "description": "An SSH client for the Mac that asks before rm -rf runs on production.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#141316",
+  "theme_color": "#141316",
+  "icons": [
+    { "src": "/img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/img/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

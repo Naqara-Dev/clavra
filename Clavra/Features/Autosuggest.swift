@@ -9,7 +9,7 @@ final class CommandHistory {
     private static var cache: [String: CommandHistory] = [:]
 
     static var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "Autosuggest") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "Autosuggest") == nil || UserDefaults.standard.bool(forKey: "Autosuggest") }
         set { UserDefaults.standard.set(newValue, forKey: "Autosuggest") }
     }
 

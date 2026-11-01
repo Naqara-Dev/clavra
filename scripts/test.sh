@@ -17,3 +17,12 @@ if command -v node >/dev/null; then
 else
   echo "- node not found; skipped the phone page's crypto checks"
 fi
+
+# The relay serves the same phone page the Mac does.
+for pair in "Clavra/Remote/remote.html site/public/connect/index.html" "Clavra/Remote/remote.js site/public/connect/remote.js" \
+            "Clavra/Remote/aead.js site/public/connect/aead.js"; do
+  set -- $pair
+  cmp -s "$1" "$2" || { echo "✗ $2 differs from $1; run scripts/sync-site.sh"; exit 1; }
+done
+echo "✓ the site's phone page matches the app's"
+

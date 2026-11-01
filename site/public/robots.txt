@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /connect
+Disallow: /relay/
+
+Sitemap: https://clavra.naqara.dev/sitemap.xml

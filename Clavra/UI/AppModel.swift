@@ -231,7 +231,7 @@ final class AppModel {
     // MARK: Tabs across launches
 
     static var restoresTabs: Bool {
-        get { UserDefaults.standard.object(forKey: "RestoreTabs") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "RestoreTabs") == nil || UserDefaults.standard.bool(forKey: "RestoreTabs") }
         set { UserDefaults.standard.set(newValue, forKey: "RestoreTabs") }
     }
 

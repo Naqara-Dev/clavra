@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 APP="$PWD/build/Build/Products/Debug/Clavra.app"
 BIN="$APP/Contents/MacOS/Clavra"
 [ -x "$BIN" ] || { echo "Build the Debug app first (see the top of this script)."; exit 2; }
-for port in 2222 8765 18765 19876 11080; do
+for port in 2222 8765 18765 19876 11080 8790; do
   if lsof -nP -iTCP:$port -sTCP:LISTEN >/dev/null 2>&1; then echo "Port $port is in use; stop whatever uses it first."; exit 2; fi
 done
 
@@ -144,14 +144,24 @@ else
 fi
 
 echo "— phone access"
-open_host -ClavraKey "$T/ed25519" -ClavraRemote YES -ClavraRemoteAllow YES
+open_host -ClavraKey "$T/ed25519" -ClavraRemote YES -ClavraRemoteAllow YES -PhoneRelay NO
 sleep 8
 LINK="$(grep CLAVRA_REMOTE "$T/out.log" | tail -1 | cut -d' ' -f2)"
 if [ -n "$LINK" ]; then node Tests/phone.js Clavra/Remote/aead.js "$LINK" || FAILED=$((FAILED + 1)); else fail "phone access starts"; fi
-open_host -ClavraKey "$T/ed25519" -ClavraPlace production -ClavraRemote YES -ClavraRemoteAllow YES
+open_host -ClavraKey "$T/ed25519" -ClavraPlace production -ClavraRemote YES -ClavraRemoteAllow YES -PhoneRelay NO
 sleep 8
 LINK="$(grep CLAVRA_REMOTE "$T/out.log" | tail -1 | cut -d' ' -f2)"
 if [ -n "$LINK" ]; then node Tests/phone.js Clavra/Remote/aead.js "$LINK" production || FAILED=$((FAILED + 1)); else fail "phone access starts"; fi
+
+
+echo "— phone access through the relay (Tests/relay-mock.js)"
+node Tests/relay-mock.js 8790 >/dev/null 2>&1 & RELAY_PID=$!
+sleep 1
+open_host -ClavraKey "$T/ed25519" -ClavraRemote YES -ClavraRemoteAllow YES -PhoneRelay YES -ClavraRelay ws://127.0.0.1:8790
+sleep 8
+LINK="$(grep CLAVRA_REMOTE "$T/out.log" | tail -1 | cut -d' ' -f2)"
+if [ -n "$LINK" ]; then node Tests/phone.js Clavra/Remote/aead.js "$LINK" || FAILED=$((FAILED + 1)); else fail "phone access starts on the relay"; fi
+kill "$RELAY_PID" 2>/dev/null
 
 echo
 if [ "$FAILED" = 0 ]; then echo "All end-to-end checks passed."; else echo "$FAILED end-to-end checks failed."; fi

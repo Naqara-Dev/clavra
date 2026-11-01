@@ -4,14 +4,21 @@
 const aead = require(require("path").resolve(process.argv[2]));
 const link = new URL(process.argv[3]);
 const production = process.argv[4] === "production";
-const [port, secret] = link.hash.slice(1).split(".");
+const fragment = link.hash.slice(1);
+const relayed = fragment.startsWith("r=");
+const params = new URLSearchParams(relayed ? fragment : "");
+const [port, lanSecret] = relayed ? ["", ""] : fragment.split(".");
+const secret = relayed ? params.get("k") : lanSecret;
+const socketURL = relayed
+  ? `${link.protocol === "https:" ? "wss" : "ws"}://${link.host}/relay/${params.get("r")}?role=phone`
+  : `ws://${link.hostname}:${port}`;
 const key = Uint8Array.from(Buffer.from(secret.replace(/-/g, "+").replace(/_/g, "/"), "base64"));
 let failures = 0;
 const check = (ok, name) => { console.log((ok ? "✓ " : "✗ ") + name); if (!ok) failures++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function connect(useKey, hello) {
-  const ws = new WebSocket(`ws://${link.hostname}:${port}`);
+  const ws = new WebSocket(socketURL);
   ws.binaryType = "arraybuffer";
   const state = { ws, messages: [], screen: "", closed: false, sent: 0, challenge: null, last: null };
   state.send = (o) => {
@@ -36,7 +43,7 @@ function connect(useKey, hello) {
 }
 
 (async () => {
-  for (const [path, want] of [["/", 200], ["/aead.js", 200], ["/remote.js", 200], ["/../etc/passwd", 404]]) {
+  for (const [path, want] of relayed ? [] : [["/", 200], ["/aead.js", 200], ["/remote.js", 200], ["/../etc/passwd", 404]]) {
     const r = await fetch(new URL(path, link.origin));
     check(r.status === want, `page ${path} → ${r.status}`);
   }

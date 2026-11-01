@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clavra: an SSH client for Mac that asks before rm -rf runs on production</title>
+    <meta
+      name="description"
+      content="Clavra is a free SSH client for macOS. It knows which servers are production and holds back commands you can't take back. Split panes, SFTP, port forwarding, server health and your terminal on your phone."
+    />
+    <link rel="canonical" href="https://clavra.naqara.dev/" />
+    <meta name="theme-color" content="#141316" />
+    <meta name="color-scheme" content="dark" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Clavra" />
+    <meta property="og:url" content="https://clavra.naqara.dev/" />
+    <meta property="og:title" content="Clavra: the SSH client that asks before rm -rf" />
+    <meta property="og:description" content="A calm SSH client for the Mac. Production guard, split panes, SFTP, tunnels, server health, and your tabs on your phone. Free." />
+    <meta property="og:image" content="https://clavra.naqara.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Clavra holding back docker compose down on a production server and asking whether to run it." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Clavra: the SSH client that asks before rm -rf" />
+    <meta name="twitter:description" content="A calm SSH client for the Mac. Production guard, split panes, SFTP, tunnels and your tabs on your phone. Free." />
+    <meta name="twitter:image" content="https://clavra.naqara.dev/og.png" />
+
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="preload" as="image" href="/img/hero.jpg" fetchpriority="high" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://naqara.dev/#org",
+            "name": "Naqara Dev.",
+            "url": "https://naqara.dev",
+            "logo": "https://naqara.dev/assets/img/logo-512.png",
+            "email": "hello@naqara.dev",
+            "sameAs": ["https://github.com/Naqara-Dev"]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://clavra.naqara.dev/#site",
+            "url": "https://clavra.naqara.dev/",
+            "name": "Clavra",
+            "publisher": { "@id": "https://naqara.dev/#org" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://clavra.naqara.dev/#app",
+            "name": "Clavra",
+            "description": "An SSH client for macOS that knows which servers are production and asks before running commands that can't be undone. Split panes, SFTP, port forwarding, server health and phone access.",
+            "url": "https://clavra.naqara.dev/",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "SSH client",
+            "operatingSystem": "macOS 15 or later",
+            "softwareVersion": "0.4.0",
+            "fileSize": "10.6 MB",
+            "downloadUrl": "https://github.com/Naqara-Dev/clavra/releases/latest",
+            "installUrl": "https://github.com/Naqara-Dev/clavra/releases/latest",
+            "image": "https://clavra.naqara.dev/img/icon-512.png",
+            "screenshot": [
+              "https://clavra.naqara.dev/img/hero.jpg",
+              "https://clavra.naqara.dev/img/guard.jpg",
+              "https://clavra.naqara.dev/img/files.jpg",
+              "https://clavra.naqara.dev/img/ports.jpg",
+              "https://clavra.naqara.dev/img/phone.jpg"
+            ],
+            "featureList": [
+              "Asks before risky commands run on production servers",
+              "Split panes and command suggestions",
+              "SFTP file browser with in-place editing",
+              "Local, remote and SOCKS port forwarding",
+              "Jump hosts",
+              "Server health and reachability",
+              "Phone access by QR code, end-to-end encrypted",
+              "Ed25519, RSA and ECDSA keys; passwords in the Keychain"
+            ],
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "publisher": { "@id": "https://naqara.dev/#org" },
+            "isAccessibleForFree": true,
+            "codeRepository": "https://github.com/Naqara-Dev/clavra"
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://clavra.naqara.dev/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is Clavra free?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. Clavra is free to download and use, with no account and no subscription. The source is on GitHub." }
+              },
+              {
+                "@type": "Question",
+                "name": "Which commands does Clavra hold back on production?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Commands that are hard to take back: rm -rf, DROP TABLE or DATABASE, DELETE or UPDATE without WHERE, shutdown and reboot, docker rm, docker compose down, kubectl delete, terraform destroy, git push --force, chmod -R, firewall flushes and more. Nothing reaches the server until you confirm." }
+              },
+              {
+                "@type": "Question",
+                "name": "Where are my passwords and keys stored?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Passwords and key passphrases are kept in your Mac's Keychain. Keys stay in ~/.ssh. Your hosts are a file on your Mac, or in your own iCloud Drive if you turn sync on. Clavra has no servers that hold your data." }
+              },
+              {
+                "@type": "Question",
+                "name": "Can clavra.naqara.dev read my terminal when I use Phone Access?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. The phone and the Mac encrypt everything with ChaCha20-Poly1305 under a key that exists only in the QR code. The relay passes along data it cannot read, and every new phone has to be allowed on the Mac." }
+              },
+              {
+                "@type": "Question",
+                "name": "Does Clavra work with my ~/.ssh/config?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. Import the hosts from ~/.ssh/config in one click, including their user, port and key. Host keys already in ~/.ssh/known_hosts are trusted." }
+              },
+              {
+                "@type": "Question",
+                "name": "Which Macs does Clavra run on?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Any Mac with macOS 15 or later, Apple Silicon or Intel." }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="top">
+      <div class="wrap top__row">
+        <a class="brand" href="/" aria-label="Clavra, home">
+          <img src="/img/icon-192.png" width="30" height="30" alt="" />
+          <span>Clavra</span>
+        </a>
+        <nav class="top__nav" aria-label="Main">
+          <a href="#features">Features</a>
+          <a href="#phone">Phone</a>
+          <a href="#faq">Questions</a>
+          <a class="top__download" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- The guard, played out: the one moment that explains Clavra. -->
+      <section class="hero">
+        <div class="wrap hero__grid">
+          <div class="hero__copy">
+            <h1>Every server, one key.</h1>
+            <p class="hero__lede">
+              Clavra is an SSH client for the Mac that knows which servers are production, and
+              asks before a command you can't take back.
+            </p>
+            <div class="hero__actions">
+              <a class="button button--brass" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
+              <a class="button button--quiet" href="https://github.com/Naqara-Dev/clavra" rel="noopener">Source on GitHub</a>
+            </div>
+            <p class="hero__fine">Free. macOS 15 or later, Apple Silicon and Intel. No account.</p>
+          </div>
+
+          <div class="guard" aria-label="An example: Clavra holds back rm -rf on a production server">
+            <div class="guard__bar"><span class="place place--production">Production</span> api-prod</div>
+            <div class="guard__screen">
+              <p class="term"><span class="term__prompt">deploy@api-prod:~/app$</span> <span class="term__typed" data-typed>rm -rf /var/www/releases</span><span class="term__caret" aria-hidden="true"></span></p>
+              <div class="ask" data-ask>
+                <p class="ask__title"><span class="dot dot--production" aria-hidden="true"></span>Run this on api-prod?</p>
+                <p class="ask__command">rm -rf /var/www/releases</p>
+                <p class="ask__why">Deletes files without asking. Nothing has been sent yet.</p>
+                <div class="ask__buttons">
+                  <button type="button" class="button button--brass button--small" data-answer="stop">Don't Run</button>
+                  <button type="button" class="button button--coral button--small" data-answer="run">Run It</button>
+                </div>
+              </div>
+              <p class="term term--after" data-after hidden></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="wrap">
+          <figure class="window window--hero">
+            <img src="/img/hero.jpg" width="1600" height="978" fetchpriority="high"
+              alt="Clavra on a Mac: hosts grouped as Production, Staging and Personal with how fast each answers, and a production tab split in two, a deploy on one side and running containers and logs on the other." />
+          </figure>
+        </div>
+      </section>
+
+      <!-- The three places: the idea everything else hangs on. -->
+      <section class="places" aria-labelledby="places-title">
+        <div class="wrap">
+          <h2 id="places-title">Not every server deserves the same terminal.</h2>
+          <p class="section__lede">
+            Put each host where it belongs. Clavra takes it from there: calm where it can be,
+            careful where it has to be.
+          </p>
+          <ul class="places__list">
+            <li class="places__item">
+              <h3><span class="dot dot--personal" aria-hidden="true"></span>Personal</h3>
+              <p>Your VPS, the Pi in the cupboard. Nothing in your way: just the terminal, fast.</p>
+            </li>
+            <li class="places__item">
+              <h3><span class="dot dot--staging" aria-hidden="true"></span>Staging</h3>
+              <p>Where you try things. Clavra remembers what you ran and offers it back as you type.</p>
+            </li>
+            <li class="places__item">
+              <h3><span class="dot dot--production" aria-hidden="true"></span>Production</h3>
+              <p>A coral mark on every pane, and a yes before anything you can't undo. Nothing it remembers is kept on disk.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="features" class="features" aria-label="Features">
+        <div class="wrap">
+          <article class="feature">
+            <div class="feature__text">
+              <h2>A yes before <span class="nowrap">rm -rf</span>.</h2>
+              <p>
+                Press Return on <code>rm -rf</code>, <code>DROP TABLE</code>, a <code>DELETE</code>
+                without <code>WHERE</code>, <code>shutdown</code>, <code>docker compose down</code> or a
+                force push on a production host, and Clavra holds it back until you confirm. Pastes,
+                snippets and every split pane are checked too.
+              </p>
+            </div>
+            <figure class="window"><img src="/img/guard.jpg" width="1600" height="978" loading="lazy" decoding="async"
+              alt="docker compose down typed on api-prod, held back with the question: Run this on api-prod? Takes containers down. Nothing has been sent yet." /></figure>
+          </article>
+
+          <article class="feature feature--flip">
+            <div class="feature__text">
+              <h2>Split it, and type less.</h2>
+              <p>
+                ⌘D splits beside, ⇧⌘D splits below, the way you know from iTerm. Commands you ran on
+                that host before appear in grey after the cursor; → takes them. Find in the
+                scrollback, type into every pane at once, and when Wi-Fi drops, the session comes back
+                on its own with its tunnels.
+              </p>
+            </div>
+            <figure class="window"><img src="/img/suggest.jpg" width="1600" height="978" loading="lazy" decoding="async"
+              alt="A staging tab split top and bottom; in the top pane the rest of a command run earlier is suggested in grey after the cursor." /></figure>
+          </article>
+
+          <article class="feature">
+            <div class="feature__text">
+              <h2>Files, beside the terminal.</h2>
+              <p>
+                Browse the server over SFTP without leaving the tab. Drop files or whole folders to
+                upload, download folders with everything in them, and open any file in your Mac
+                editor: every save goes back up. Uploads land under a temporary name first, so a
+                dropped connection never leaves half a file.
+              </p>
+            </div>
+            <figure class="window"><img src="/img/files.jpg" width="1600" height="978" loading="lazy" decoding="async"
+              alt="A Files panel next to the terminal listing the app folder on the server: logs, migrations, public, src and a few files with sizes." /></figure>
+          </article>
+
+          <article class="feature feature--flip">
+            <div class="feature__text">
+              <h2>Tunnels in one click.</h2>
+              <p>
+                Clavra lists the ports the server listens on, PostgreSQL, Redis, your app, and forwards
+                one with a click. Local, remote and SOCKS tunnels, saved with the host so they open on
+                every connect, and jump hosts for servers behind a bastion.
+              </p>
+            </div>
+            <figure class="window"><img src="/img/ports.jpg" width="1600" height="978" loading="lazy" decoding="async"
+              alt="The Ports panel on db-prod: localhost 15432 forwarded to the server's 5432, a SOCKS proxy on 1080, and listening ports with Forward buttons." /></figure>
+          </article>
+        </div>
+      </section>
+
+      <section id="phone" class="phone" aria-labelledby="phone-title">
+        <div class="wrap phone__grid">
+          <figure class="phone__shot">
+            <img src="/img/phone.jpg" width="780" height="1688" loading="lazy" decoding="async"
+              alt="A Clavra tab open in a phone browser: a staging terminal after a deploy, with Esc, Tab, Ctrl and arrow keys above a field to type in." />
+          </figure>
+          <div class="phone__text">
+            <h2 id="phone-title">Your tabs, on your phone.</h2>
+            <p>
+              Away from the desk and the worker needs a restart? Turn on Phone Access in Clavra, scan
+              the code with your phone's camera, and allow it on the Mac. Your tabs open in the
+              phone's browser, with Esc, Tab, Ctrl and the arrows a tap away. There's nothing to
+              install.
+            </p>
+            <ol class="steps">
+              <li>On the Mac: Clavra, Phone Access, Turn On.</li>
+              <li>On the phone: point the camera at the code.</li>
+              <li>On the Mac again: Allow. Then type.</li>
+            </ol>
+            <p class="phone__safe">
+              The QR code carries a key that never crosses the network. Phone and Mac encrypt
+              everything with it, so this site only passes along data it can't read. Production tabs
+              are view only from a phone unless you say otherwise, and access turns itself off after
+              30 quiet minutes.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="details" aria-labelledby="details-title">
+        <div class="wrap">
+          <h2 id="details-title">And the parts you'd expect to be right.</h2>
+          <dl class="details__list">
+            <div><dt>Keys, checked</dt><dd>Every key in <code>~/.ssh</code> with its type, age and the hosts that use it. Weak or world-readable keys are called out; a new Ed25519 key is one click. Ed25519, RSA and ECDSA all sign in.</dd></div>
+            <div><dt>Host keys, verified</dt><dd>The first connection shows the fingerprint to trust. A changed key gets a red warning, checked against your <code>~/.ssh/known_hosts</code> too.</dd></div>
+            <div><dt>Server health</dt><dd>How fast each host answers, in the sidebar. While connected: load, memory, disk and uptime, and anything running hot turns coral.</dd></div>
+            <div><dt>Snippets</dt><dd>The commands you keep reaching for, typed into any tab with ⌘;. Risky ones still ask on production.</dd></div>
+            <div><dt>Your ~/.ssh/config</dt><dd>Imported in one click, with users, ports and keys. Type <code>user@server</code> in Where to? for anything else.</dd></div>
+            <div><dt>Secrets in the Keychain</dt><dd>Passwords and passphrases never touch a file. No account, no analytics, no telemetry.</dd></div>
+            <div><dt>Updates in place</dt><dd>Once a day Clavra asks GitHub for a newer version, checks it's signed by us, and restarts into it. You can turn the check off.</dd></div>
+            <div><dt>On every Mac you use</dt><dd>Keep hosts and snippets in your own iCloud Drive if you like. Each Mac keeps its own passwords.</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section id="faq" class="faq" aria-labelledby="faq-title">
+        <div class="wrap faq__wrap">
+          <h2 id="faq-title">Questions</h2>
+          <details>
+            <summary>Is Clavra free?</summary>
+            <p>Yes. Clavra is free to download and use, with no account and no subscription. The source is on <a href="https://github.com/Naqara-Dev/clavra" rel="noopener">GitHub</a>.</p>
+          </details>
+          <details>
+            <summary>Which commands does Clavra hold back on production?</summary>
+            <p>Commands that are hard to take back: <code>rm -rf</code>, <code>DROP TABLE</code> or <code>DATABASE</code>, <code>DELETE</code> or <code>UPDATE</code> without <code>WHERE</code>, <code>shutdown</code> and <code>reboot</code>, <code>docker rm</code>, <code>docker compose down</code>, <code>kubectl delete</code>, <code>terraform destroy</code>, <code>git push --force</code>, <code>chmod -R</code>, firewall flushes and more. Nothing reaches the server until you confirm. You can turn the guard on for any host, not only production.</p>
+          </details>
+          <details>
+            <summary>Where are my passwords and keys stored?</summary>
+            <p>Passwords and key passphrases are kept in your Mac's Keychain. Keys stay in <code>~/.ssh</code>. Your hosts are a file on your Mac, or in your own iCloud Drive if you turn sync on. Clavra has no servers that hold your data.</p>
+          </details>
+          <details>
+            <summary>Can clavra.naqara.dev read my terminal when I use Phone Access?</summary>
+            <p>No. The phone and the Mac encrypt everything with ChaCha20-Poly1305 under a key that exists only in the QR code. The relay passes along data it cannot read, and every new phone has to be allowed on the Mac. If you'd rather not use the relay at all, Phone Access can also work directly over your Wi-Fi.</p>
+          </details>
+          <details>
+            <summary>Does Clavra work with my ~/.ssh/config?</summary>
+            <p>Yes. Import the hosts from <code>~/.ssh/config</code> in one click, including their user, port and key. Host keys already in <code>~/.ssh/known_hosts</code> are trusted.</p>
+          </details>
+          <details>
+            <summary>Why does macOS ask me to confirm the first launch?</summary>
+            <p>Clavra isn't notarized by Apple yet. Open it once, then go to System Settings, Privacy &amp; Security, and click Open Anyway. That's needed once; updates install from inside the app after that.</p>
+          </details>
+          <details>
+            <summary>Which Macs does Clavra run on?</summary>
+            <p>Any Mac with macOS 15 or later, Apple Silicon or Intel.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="end">
+        <div class="wrap end__row">
+          <img src="/img/icon-512.png" width="96" height="96" alt="" loading="lazy" />
+          <div>
+            <h2>Bring your servers.</h2>
+            <p>Download Clavra, import your <code>~/.ssh/config</code>, and mark the ones that matter.</p>
+          </div>
+          <a class="button button--brass" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap foot__row">
+        <p>Clavra is made by <a href="https://naqara.dev">Naqara Dev.</a>, a small studio in Indonesia.</p>
+        <nav aria-label="More">
+          <a href="https://github.com/Naqara-Dev/clavra" rel="noopener">GitHub</a>
+          <a href="https://github.com/Naqara-Dev/clavra/releases" rel="noopener">Releases</a>
+          <a href="https://github.com/Naqara-Dev/clavra/issues" rel="noopener">Report an issue</a>
+          <a href="mailto:hello@naqara.dev">hello@naqara.dev</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="/site.js" defer></script>
+  </body>
+</html>

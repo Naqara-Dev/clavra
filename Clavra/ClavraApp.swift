@@ -150,10 +150,47 @@ struct RootView: View {
     private func debugLaunch() {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "ClavraNewHost") { model.newHost() }
+        // `-ClavraWindow 1440x880` sizes the window, for screenshots.
+        if let size = UserDefaults.standard.string(forKey: "ClavraWindow")?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
+            DispatchQueue.main.async {
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+                window.setFrame(NSRect(x: 36, y: 36, width: size[0], height: size[1]), display: true)
+            }
+        }
+        // `-ClavraOpenSaved api-prod,web-staging` opens saved hosts by name, a tab each.
+        for name in (UserDefaults.standard.string(forKey: "ClavraOpenSaved") ?? "").split(separator: ",") {
+            if let server = model.store.hosts.first(where: { $0.title == name }) { model.open(server) }
+        }
         if let page = UserDefaults.standard.string(forKey: "ClavraPage") {
             model.show(["keys": .keys, "snippets": .snippets, "remote": .remote][page] ?? .home)
         }
-        guard let target = UserDefaults.standard.string(forKey: "ClavraOpen"), var server = Server(quick: target) else { return }
+        if let target = UserDefaults.standard.string(forKey: "ClavraOpen"), let server = Server(quick: target) { debugOpen(server) }
+        if let panel = UserDefaults.standard.string(forKey: "ClavraPanel") {
+            model.sidePanel = panel == "files" ? .files : panel == "ports" ? .ports : nil
+        }
+        if UserDefaults.standard.bool(forKey: "ClavraSnippets") { model.showingSnippets = true }
+        // `-ClavraFilesTest dir` drives the file browser for scripts/e2e.sh: downloads everything
+        // named e2e-dl-*, uploads `-ClavraFilesUpload path`, and edits e2e-edit.txt.
+        if let dir = UserDefaults.standard.string(forKey: "ClavraFilesTest") {
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                guard let files = model.current?.files else { return }
+                await files.go(to: dir)
+                for entry in files.entries where entry.name.hasPrefix("e2e-dl-") { files.download(entry) }
+                if let path = UserDefaults.standard.string(forKey: "ClavraFilesUpload") { files.upload([URL(fileURLWithPath: path)]) }
+                if let note = files.entries.first(where: { $0.name == "e2e-edit.txt" }) { files.edit(note) }
+            }
+        }
+        // `-ClavraSplit beside,below` splits the front tab, one step per word.
+        for step in (UserDefaults.standard.string(forKey: "ClavraSplit") ?? "").split(separator: ",") {
+            model.split(step == "below" ? .stacked : .sideBySide)
+        }
+        #endif
+    }
+
+    #if DEBUG
+    private func debugOpen(_ quick: Server) {
+        var server = quick
         server.keyPath = UserDefaults.standard.string(forKey: "ClavraKey")
         if let place = UserDefaults.standard.string(forKey: "ClavraPlace").flatMap(Server.Place.init(rawValue:)) { server.place = place }
         // `-ClavraForward 18080:8080` (or `socks:1080`, or `remote:9000:3000` for server 9000 → Mac 3000)
@@ -173,28 +210,8 @@ struct RootView: View {
         var jump = UserDefaults.standard.string(forKey: "ClavraJump").flatMap(Server.init(quick:))
         jump?.keyPath = server.keyPath
         model.open(server, through: jump)
-        if let panel = UserDefaults.standard.string(forKey: "ClavraPanel") {
-            model.sidePanel = panel == "files" ? .files : panel == "ports" ? .ports : nil
-        }
-        if UserDefaults.standard.bool(forKey: "ClavraSnippets") { model.showingSnippets = true }
-        // `-ClavraFilesTest dir` drives the file browser for scripts/e2e.sh: downloads everything
-        // named e2e-dl-*, uploads `-ClavraFilesUpload path`, and edits e2e-edit.txt.
-        if let dir = UserDefaults.standard.string(forKey: "ClavraFilesTest") {
-            Task {
-                try? await Task.sleep(for: .seconds(4))
-                guard let files = model.current?.files else { return }
-                await files.go(to: dir)
-                for entry in files.entries where entry.name.hasPrefix("e2e-dl-") { files.download(entry) }
-                if let path = UserDefaults.standard.string(forKey: "ClavraFilesUpload") { files.upload([URL(fileURLWithPath: path)]) }
-                if let note = files.entries.first(where: { $0.name == "e2e-edit.txt" }) { files.edit(note) }
-            }
-        }
-        // `-ClavraSplit beside,below` splits the new tab, one step per word.
-        for step in (UserDefaults.standard.string(forKey: "ClavraSplit") ?? "").split(separator: ",") {
-            model.split(step == "below" ? .stacked : .sideBySide)
-        }
-        #endif
     }
+    #endif
 }
 
 /// The menu bar's list: every saved host by place, and the way back to the window.

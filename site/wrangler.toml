@@ -1,0 +1,21 @@
+# clavra.naqara.dev: the landing page, the phone page (/connect) and the Phone Access relay.
+name = "clavra"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+not_found_handling = "404-page"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "Relay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Relay"]
+
+[[routes]]
+pattern = "clavra.naqara.dev"
+custom_domain = true

@@ -78,6 +78,14 @@ final class Session: Identifiable {
     /// has passed closes what it opened instead of taking over the tab: Citadel's connect doesn't
     /// stop when its task is cancelled.
     @ObservationIgnored private var generation = 0
+    #if DEBUG
+    /// Sessions in the order they were made, for `-ClavraTypes`.
+    private static var debugSessions = 0
+    @ObservationIgnored private let debugIndex: Int = {
+        Session.debugSessions += 1
+        return Session.debugSessions
+    }()
+    #endif
     /// Tunnels that were open when the connection dropped, opened again once it's back.
     @ObservationIgnored private var carried: [Server.Forward] = []
 
@@ -236,7 +244,16 @@ final class Session: Identifiable {
             #if DEBUG
             // `-ClavraType 'ls\r|ec'` types into the shell once it's up, a key at a time, pausing at
             // each `|`, to check input end to end.
-            if let typed = UserDefaults.standard.string(forKey: "ClavraType") {
+            // `-ClavraTypeNext` types something else in every session after the first (split panes).
+            // `-ClavraTypes '("", "ls\\r")'` gives each session its own, in the order they connect.
+            let typing: String?
+            if let list = UserDefaults.standard.stringArray(forKey: "ClavraTypes") {
+                typing = debugIndex <= list.count ? list[debugIndex - 1] : nil
+            } else {
+                typing = debugIndex > 1 ? UserDefaults.standard.string(forKey: "ClavraTypeNext") ?? UserDefaults.standard.string(forKey: "ClavraType")
+                    : UserDefaults.standard.string(forKey: "ClavraType")
+            }
+            if let typed = typing {
                 Task {
                     for step in typed.replacingOccurrences(of: "\\r", with: "\r").replacingOccurrences(of: "\\e", with: "\u{1b}").split(separator: "|") {
                         try? await Task.sleep(for: .seconds(1.5))

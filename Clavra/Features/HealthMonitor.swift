@@ -16,7 +16,7 @@ final class HealthMonitor {
     @ObservationIgnored private var hosts: () -> [Server] = { [] }
 
     static var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "CheckHosts") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "CheckHosts") == nil || UserDefaults.standard.bool(forKey: "CheckHosts") }
         set { UserDefaults.standard.set(newValue, forKey: "CheckHosts") }
     }
 

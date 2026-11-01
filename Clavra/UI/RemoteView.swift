@@ -3,6 +3,10 @@ import SwiftUI
 /// Turn phone access on, show the QR code, and see who's connected.
 struct RemoteView: View {
     @Bindable var model: AppModel
+    @State private var via = RemoteAccess.throughRelay
+
+    private static let relayNote = "The QR code holds a fresh key that never crosses the network. Everything between phone and Mac is encrypted with it, so clavra.naqara.dev only ever passes along data it can't read. Every new phone has to be allowed here, and access turns itself off after 30 minutes without use."
+    private static let directNote = "The QR code holds this Mac's address and a fresh key that never crosses the network. Everything between phone and Mac is encrypted with it, every new phone has to be allowed here, and access turns itself off after 30 minutes without use. The page itself loads over plain HTTP, so only use this on networks you trust: home or office, not a café."
 
     private var remote: RemoteAccess { model.remote }
 
@@ -12,7 +16,7 @@ struct RemoteView: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Phone Access").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.ink)
-                        Text("Use your tabs from a phone on the same Wi-Fi. Nothing to install: scan, allow, type.")
+                        Text("Use your tabs from a phone. Nothing to install: scan, allow, type.")
                             .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                     }
                     Spacer()
@@ -42,6 +46,13 @@ struct RemoteView: View {
                                 ProgressView().frame(width: 228, height: 228)
                             }
                             Text("Scan with the phone's camera").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
+                            if RemoteAccess.throughRelay {
+                                HStack(spacing: 6) {
+                                    Circle().fill(remote.relayConnected ? Theme.color(for: .personal) : Theme.brass).frame(width: 6, height: 6)
+                                    Text(remote.relayConnected ? "Ready on clavra.naqara.dev" : "Reaching clavra.naqara.dev…")
+                                        .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+                                }
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 16) {
@@ -73,7 +84,7 @@ struct RemoteView: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("How it's kept safe").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
-                        Text("The QR code holds this Mac's address and a fresh key that never crosses the network. Everything between phone and Mac is encrypted with it, every new phone has to be allowed here, and access turns itself off after 30 minutes without use. The page itself loads over plain HTTP, so only use this on networks you trust: home or office, not a café.")
+                        Text(RemoteAccess.throughRelay ? Self.relayNote : Self.directNote)
                             .font(.system(size: 12)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.top, 24)
@@ -83,6 +94,15 @@ struct RemoteView: View {
                         step("2", "Scan it with the phone's camera; the page opens in the browser.")
                         step("3", "Allow the phone here. Pick a tab on the phone and type.")
                     }
+                    card("Connect") {
+                        Segments(options: [true, false], selection: Binding(get: { RemoteAccess.throughRelay }, set: { RemoteAccess.throughRelay = $0; via = $0 })) {
+                            $0 ? "From anywhere" : "Same Wi-Fi only"
+                        }
+                        .frame(width: 300)
+                        Text(via ? "Phone and Mac meet through clavra.naqara.dev over HTTPS. The relay passes along encrypted data it can't read." : "The phone talks to this Mac directly. Nothing leaves your network, but the page loads over plain HTTP, so use it only on networks you trust.")
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 22)
                 }
             }
             .frame(maxWidth: 680)

@@ -44,8 +44,17 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var title: String { name.isEmpty ? address : name }
 
     var target: String {
-        port == 22 ? "\(user)@\(address)" : "\(user)@\(address):\(port)"
+        #if DEBUG
+        if let shown = Self.demoTargets[id.uuidString] { return shown }
+        #endif
+        return port == 22 ? "\(user)@\(address)" : "\(user)@\(address):\(port)"
     }
+
+    #if DEBUG
+    /// `-ClavraDemoTargets '{ "<host id>" = "deploy@10.0.1.12"; }'` shows a made-up address for a
+    /// saved host, so screenshots of a local test server don't show a real account.
+    static let demoTargets = UserDefaults.standard.dictionary(forKey: "ClavraDemoTargets") as? [String: String] ?? [:]
+    #endif
 
     /// Two letters for the host's tile: the first letters of the first two words ("api prod" is
     /// "ap"), or the first two letters of a single word.
