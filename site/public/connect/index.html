@@ -53,9 +53,37 @@
   .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px; gap: 8px; }
   .center h1 { font-size: 20px; margin: 0; font-weight: 600; }
   .center p { margin: 0; color: var(--secondary); max-width: 300px; line-height: 1.45; }
+  .how { flex: 1; padding: 36px 22px 28px; max-width: 460px; margin: 0 auto; width: 100%; }
+  .how h1 { margin: 6px 0 8px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+  .how > p { margin: 0; color: var(--secondary); line-height: 1.5; }
+  .how ol { list-style: none; counter-reset: step; margin: 24px 0 0; padding: 0; display: grid; gap: 12px; }
+  .how li { counter-increment: step; display: flex; gap: 12px; align-items: baseline; padding: 14px; border-radius: 12px;
+    background: var(--card); border: 1px solid var(--line); line-height: 1.45; }
+  .how li::before { content: counter(step); flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-grid;
+    place-items: center; background: rgba(216,180,108,.14); color: var(--brass); font-weight: 600; font-size: 13px; }
+  .how b { color: var(--ink); font-weight: 600; }
+  .how .note { margin-top: 18px; font-size: 13.5px; color: var(--tertiary); line-height: 1.5; }
+  .how .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  .how .links a { display: inline-flex; align-items: center; height: 44px; padding: 0 16px; border-radius: 11px; text-decoration: none;
+    font-weight: 600; font-size: 15px; background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  .how .links a.primary { background: var(--brass); color: #1d1810; border-color: transparent; }
 </style>
 </head>
 <body>
+  <section class="how" id="how" hidden>
+    <h1>Connect your phone to Clavra</h1>
+    <p>This page shows your Mac's terminal tabs on your phone. It opens on its own when you scan the code from Clavra.</p>
+    <ol>
+      <li><span>On your Mac, open <b>Clavra</b> and choose <b>Phone Access</b> in the sidebar, then <b>Turn On</b>.</span></li>
+      <li><span>Point your phone's camera at the QR code. This page opens with your Mac's key.</span></li>
+      <li><span>Click <b>Allow</b> on the Mac. Your tabs appear here; pick one and type.</span></li>
+    </ol>
+    <p class="note">The key in the code never leaves your phone and Mac, so nobody in between, this site included, can read what you type or see.</p>
+    <div class="links">
+      <a class="primary" href="https://github.com/Naqara-Dev/clavra/releases/latest">Get Clavra for Mac</a>
+      <a href="https://clavra.naqara.dev/">What is Clavra?</a>
+    </div>
+  </section>
   <div class="center" id="intro">
     <h1>Connecting to Clavra…</h1>
     <p id="intro-text">Keep this page open. Your Mac will ask whether to let this phone in.</p>

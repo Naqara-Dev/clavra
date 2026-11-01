@@ -66,6 +66,7 @@
   }
 
   function intro(title, text) {
+    $("how").hidden = true;
     $("intro").hidden = false;
     $("intro").querySelector("h1").textContent = title;
     $("intro-text").textContent = text;
@@ -203,7 +204,13 @@
   }
 
   function connect() {
-    if (!key || !place) { intro("Scan the code again", "This link is missing its key. Open Phone Access in Clavra and scan the QR code."); return; }
+    if (!key || !place) {
+      // Opened by hand, not from a QR code: explain how to get here properly.
+      $("intro").hidden = true;
+      $("how").hidden = false;
+      document.title = "Connect your phone · Clavra";
+      return;
+    }
     socket = relayed
       ? new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/relay/${room}?role=phone`)
       : new WebSocket(`ws://${location.hostname}:${portText}`);

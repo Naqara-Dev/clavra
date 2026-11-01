@@ -589,6 +589,13 @@ p {
   font-size: 0.85rem;
 }
 
+.phone__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 26px;
+}
+
 .phone .phone__safe {
   margin-top: 26px;
   padding-top: 20px;
