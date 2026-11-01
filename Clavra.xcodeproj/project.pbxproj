@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		C10000000000000000000010 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000011 /* Citadel */; };
 		C10000000000000000000013 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000014 /* SwiftTerm */; };
+		C10000000000000000000016 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000017 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 			files = (
 				C10000000000000000000010 /* Citadel in Frameworks */,
 				C10000000000000000000013 /* SwiftTerm in Frameworks */,
+				C10000000000000000000016 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -74,6 +76,7 @@
 			packageProductDependencies = (
 				C10000000000000000000011 /* Citadel */,
 				C10000000000000000000014 /* SwiftTerm */,
+				C10000000000000000000017 /* Sparkle */,
 			);
 			productName = Clavra;
 			productReference = C10000000000000000000001 /* Clavra.app */;
@@ -107,6 +110,7 @@
 			packageReferences = (
 				C10000000000000000000012 /* XCRemoteSwiftPackageReference "Citadel" */,
 				C10000000000000000000015 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				C10000000000000000000018 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C10000000000000000000005 /* Products */;
@@ -188,7 +192,7 @@
 				CODE_SIGN_ENTITLEMENTS = Clavra/Clavra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -201,7 +205,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.naqara.clavra;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -216,7 +220,7 @@
 				CODE_SIGN_ENTITLEMENTS = Clavra/Clavra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -229,7 +233,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.naqara.clavra;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -278,6 +282,14 @@
 				version = 1.11.2;
 			};
 		};
+		C10000000000000000000018 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.10.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -290,6 +302,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C10000000000000000000015 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		C10000000000000000000017 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C10000000000000000000018 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

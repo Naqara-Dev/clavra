@@ -21,6 +21,7 @@ private struct GeneralSettings: View {
     @State private var check = HealthMonitor.isEnabled
     @State private var restore = AppModel.restoresTabs
     @AppStorage("MenuBarExtra") private var menuBar = true
+    @State private var updates = Updates.shared.checksAutomatically
     @State private var note: String?
 
     var body: some View {
@@ -45,6 +46,10 @@ private struct GeneralSettings: View {
 
             setting("Show Clavra in the menu bar", isOn: $menuBar,
                     note: "Every saved host, one click away, even with the window closed.")
+
+            setting("Check for updates every day", isOn: $updates,
+                    note: "Clavra asks before installing anything. Updates are checked against Naqara Dev's signing key, so a tampered download is refused.")
+                .onChange(of: updates) { Updates.shared.checksAutomatically = updates }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Backup").font(.system(size: 13, weight: .medium))

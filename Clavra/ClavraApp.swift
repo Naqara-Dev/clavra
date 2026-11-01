@@ -5,6 +5,10 @@ struct ClavraApp: App {
     @State private var model = AppModel()
     @AppStorage("MenuBarExtra") private var menuBar = true
 
+    init() {
+        Updates.shared.start()
+    }
+
     var body: some Scene {
         WindowGroup(id: "main") {
             RootView(model: model)
@@ -16,6 +20,9 @@ struct ClavraApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1100, height: 700)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updates.shared.checkNow() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Host…") { model.newHost() }.keyboardShortcut("n")
                 Button("Connect…") { model.goHome() }.keyboardShortcut("k")

@@ -74,6 +74,13 @@ there is no account. Calm to look at: warm ink in the dark, paper in the light, 
 - Export and import hosts and snippets as one JSON file (never with secrets). Trusted host keys can
   be reviewed and forgotten in Settings.
 
+## Install
+
+Download the latest `Clavra-X.dmg` from [Releases](https://github.com/Naqara-Dev/clavra/releases) and
+drag Clavra to Applications. The first time, open **System Settings › Privacy & Security** and click
+**Open Anyway**. After that, updates install in place (**Clavra › Check for Updates…**, and once a
+day on their own if you leave that on in Settings).
+
 ## Build
 
 Xcode 26 or later, macOS 15 or later.
@@ -82,6 +89,21 @@ Xcode 26 or later, macOS 15 or later.
 xcodebuild -project Clavra.xcodeproj -scheme Clavra -configuration Debug \
   -derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages build
 ```
+
+## Release
+
+```sh
+./scripts/release.sh   # tests, then dist/Clavra-X.dmg and dist/appcast.xml
+gh release create vX dist/Clavra-X.dmg dist/appcast.xml --title "Clavra X" --notes-file notes.md
+```
+
+Bump `CURRENT_PROJECT_VERSION` (and usually `MARKETING_VERSION`) first: Sparkle compares the build
+number. Both files must be on the release, since the app reads
+`releases/latest/download/appcast.xml`. The DMG is signed with the "Naqara Dev Code Signing"
+certificate, and the appcast with the EdDSA key in the login Keychain (account `naqara-clavra`);
+its public half is `SUPublicEDKey` in `Config/Info.plist`. Keep backups of both: without the
+certificate, macOS treats an update as a different app; without the key, existing copies can't
+update at all.
 
 ## Tests
 
@@ -98,6 +120,7 @@ own server, keys and files in a temporary folder and removes everything it added
 | Package | Version | Why pinned there |
 |---|---|---|
 | [Citadel](https://github.com/orlandos-nl/Citadel) | 0.12.1 | SSH client on SwiftNIO SSH, with RSA keys and SFTP. |
+| [Sparkle](https://github.com/sparkle-project/Sparkle) | 2.10.0 | In-place updates, the same version Novra ships. |
 | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) | 1.11.2 | 1.12+ needs the Metal Toolchain (GPU renderer); 1.19+ also runs a build plugin. Move up once both are acceptable. |
 
 Citadel 0.12.1 pulls `swift-nio-ssh` from a contributor's fork,
