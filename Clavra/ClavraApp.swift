@@ -75,6 +75,7 @@ struct ClavraApp: App {
             CommandGroup(after: .sidebar) {
                 Button("Keys") { model.show(.keys) }.keyboardShortcut("1", modifiers: [.command, .option])
                 Button("Snippets") { model.show(.snippets) }.keyboardShortcut("2", modifiers: [.command, .option])
+                Button("Remote Access") { model.show(.remote) }.keyboardShortcut("3", modifiers: [.command, .option])
             }
         }
 
@@ -103,6 +104,7 @@ struct RootView: View {
                     case .home: HomeView(model: model)
                     case .keys: KeysView(model: model)
                     case .snippets: SnippetsView(model: model)
+                    case .remote: RemoteView(model: model)
                     }
                 }
             }
@@ -110,6 +112,16 @@ struct RootView: View {
         }
         .background(Theme.window)
         .ignoresSafeArea()
+        .overlay {
+            if let device = model.remote.waiting {
+                ZStack {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    RemoteRequest(device: device, remote: model.remote)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: model.remote.waiting)
         .sheet(item: $model.editing) { server in
             HostEditor(server: server, isNew: !model.isSaved(server), others: model.store.hosts,
                        save: { saved, connect in
@@ -121,6 +133,7 @@ struct RootView: View {
         .onAppear {
             debugLaunch()
             if model.sessions.isEmpty { model.restoreTabs() }
+            if UserDefaults.standard.bool(forKey: "ClavraRemote") { model.remote.start() }
         }
     }
 
@@ -131,7 +144,7 @@ struct RootView: View {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "ClavraNewHost") { model.newHost() }
         if let page = UserDefaults.standard.string(forKey: "ClavraPage") {
-            model.show(page == "keys" ? .keys : page == "snippets" ? .snippets : .home)
+            model.show(["keys": .keys, "snippets": .snippets, "remote": .remote][page] ?? .home)
         }
         guard let target = UserDefaults.standard.string(forKey: "ClavraOpen"), var server = Server(quick: target) else { return }
         server.keyPath = UserDefaults.standard.string(forKey: "ClavraKey")

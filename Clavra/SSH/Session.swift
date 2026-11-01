@@ -46,11 +46,15 @@ final class Session: Identifiable {
     private(set) var jumpServer: Server?
     private(set) var state: State = .connecting
     private(set) var title: String
-    private(set) var held: HeldCommand?
+    private(set) var held: HeldCommand? {
+        didSet { onScreen?() }
+    }
     /// The bell rang while this tab wasn't in front.
     var wantsAttention = false
     /// Typed bytes, handed on so they can go to other tabs too (broadcast).
     @ObservationIgnored var mirror: ((ArraySlice<UInt8>) -> Void)?
+    /// The screen changed; remote access passes it on to phones.
+    @ObservationIgnored var onScreen: (() -> Void)?
     /// Load, memory and disk, read every so often while connected. Nil until the first reading.
     private(set) var stats: ServerStats?
     let forwards = ForwardList()
@@ -292,6 +296,7 @@ final class Session: Identifiable {
     private func show(_ bytes: [UInt8]) {
         terminal.feed(byteArray: bytes[...])
         refreshSuggestion()
+        onScreen?()
     }
 
     private func decide(_ text: String, for host: Server, isJump: Bool) async -> Bool {
@@ -367,6 +372,13 @@ final class Session: Identifiable {
             let text = try? await Self.exec("tail -n 3000 ~/.zsh_history ~/.bash_history 2>/dev/null | grep -v '^==>' ; true", on: client)
             if let text { history.seed(text) }
         }
+    }
+
+    /// Keys from a phone. The same guard applies; a held command waits for a yes on the Mac.
+    func receiveRemote(_ text: String) {
+        guard isLive else { return }
+        hideSuggestion()
+        send(ArraySlice(Array(text.utf8)))
     }
 
     /// Bytes from another tab while broadcasting. They go through this tab's own guard.

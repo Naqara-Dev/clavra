@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Clavra</title>
+<style>
+  :root {
+    --window: #141316; --card: #211f24; --field: #1d1c20; --line: rgba(255,255,255,.07);
+    --ink: #ecebe6; --secondary: #a29e97; --tertiary: #6f6b66; --brass: #d8b46c; --coral: #e2857a;
+    --terminal: #121114; --text: #e6e3dc;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--window); color: var(--ink);
+    font: 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overscroll-behavior: none; }
+  button, select, input { touch-action: manipulation; }
+  body { display: flex; flex-direction: column; height: var(--height, 100dvh); width: 100%; overflow: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  body > * { min-width: 0; max-width: 100%; }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tertiary); flex: none; }
+  header .dot.on { background: #93c7a6; }
+  header select { flex: 1; min-width: 0; appearance: none; background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 12px; font: 500 16px -apple-system, system-ui, sans-serif; }
+  header button { background: none; border: 0; color: var(--secondary); font: 500 16px -apple-system, system-ui, sans-serif;
+    min-width: 44px; min-height: 44px; }
+  #note { display: none; margin: 10px 14px 0; padding: 10px 12px; border-radius: 10px; background: var(--card);
+    border: 1px solid var(--line); color: var(--secondary); font-size: 13.5px; }
+  #note.show { display: block; }
+  #note b { color: var(--ink); font-weight: 600; }
+  #note.warn { border-color: rgba(226,133,122,.4); }
+  #screen { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; background: var(--terminal);
+    margin: 10px 10px 0; border-radius: 12px; padding: 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); white-space: pre; line-height: 1.25; }
+  #screen .row { min-height: 1.25em; }
+  .cursor { outline: 1.5px solid var(--brass); outline-offset: -1px; }
+  #keys { display: flex; gap: 6px; padding: 8px 10px 0; overflow-x: auto; scrollbar-width: none; }
+  #keys::-webkit-scrollbar { display: none; }
+  #keys button { flex: none; min-width: 44px; height: 40px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink); font: 500 14px -apple-system, system-ui, sans-serif; }
+  #keys button.on { background: rgba(216,180,108,.16); border-color: rgba(216,180,108,.5); color: var(--brass); }
+  form { display: flex; gap: 8px; padding: 8px 10px max(10px, env(safe-area-inset-bottom)); }
+  #input { flex: 1; min-width: 0; background: var(--field); color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; font: 16px ui-monospace, "SF Mono", Menlo, monospace; }
+  #input:disabled { opacity: .45; }
+  #send { background: var(--brass); color: #1d1810; border: 0; border-radius: 10px; padding: 0 14px; min-width: 48px; font: 600 14px -apple-system, system-ui, sans-serif; }
+  .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px; gap: 8px; }
+  .center h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .center p { margin: 0; color: var(--secondary); max-width: 300px; line-height: 1.45; }
+</style>
+</head>
+<body>
+  <div class="center" id="intro">
+    <h1>Connecting to Clavra…</h1>
+    <p id="intro-text">Keep this page open. Your Mac will ask whether to let this phone in.</p>
+  </div>
+  <header id="bar" hidden>
+    <span class="dot" id="dot"></span>
+    <select id="tabs" aria-label="Tab"></select>
+    <button id="fit" type="button" aria-label="Text size">Aa</button>
+  </header>
+  <div id="note"></div>
+  <div id="screen" hidden></div>
+  <div id="keys" hidden>
+    <button data-key="esc">esc</button>
+    <button data-key="tab">tab</button>
+    <button data-key="ctrl" id="ctrl">ctrl</button>
+    <button data-key="up">↑</button>
+    <button data-key="down">↓</button>
+    <button data-key="left">←</button>
+    <button data-key="right">→</button>
+    <button data-key="cc">⌃C</button>
+    <button data-key="cd">⌃D</button>
+    <button data-key="pipe">|</button>
+    <button data-key="tilde">~</button>
+    <button data-key="slash">/</button>
+  </div>
+  <form id="form" hidden autocomplete="off">
+    <input id="input" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="Type here">
+    <button id="send" type="submit">↩</button>
+  </form>
+  <script src="aead.js"></script>
+  <script src="remote.js"></script>
+</body>
+</html>

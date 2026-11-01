@@ -5,16 +5,20 @@ import SwiftUI
 @MainActor @Observable
 final class AppModel {
     enum Page: Hashable {
-        case home, keys, snippets
+        case home, keys, snippets, remote
     }
 
     let store = HostStore()
     let snippets = SnippetStore()
     let health = HealthMonitor()
+    let remote = RemoteAccess()
     /// Every open terminal, in every tab and pane.
     private(set) var sessions: [Session] = []
     private(set) var tabs: [TabGroup] = [] {
-        didSet { rememberTabs() }
+        didSet {
+            rememberTabs()
+            remote.sessionsChanged()
+        }
     }
     var selection: TabGroup.ID? {
         didSet { current?.wantsAttention = false }
@@ -41,6 +45,7 @@ final class AppModel {
 
     init() {
         health.watch { [weak self] in self?.store.hosts ?? [] }
+        remote.model = self
         // A click in a pane gives it the keyboard; the terminal view takes the click itself, so it's
         // noticed on the way in.
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
@@ -110,6 +115,10 @@ final class AppModel {
         session.mirror = { [weak self, weak session] bytes in
             guard let self, self.broadcasting, let session, session.id == self.current?.id else { return }
             for other in self.sessions where other.id != session.id { other.receiveBroadcast(bytes) }
+        }
+        session.onScreen = { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.remote.screenChanged(session.id)
         }
         sessions.append(session)
         if isSaved(server) { store.touch(server.id) }

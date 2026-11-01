@@ -46,6 +46,7 @@ struct Sidebar: View {
             VStack(alignment: .leading, spacing: 2) {
                 footerButton("Snippets", icon: "text.insert", isOn: isShowing(.snippets)) { model.show(.snippets) }
                 footerButton("Keys", icon: "key", isOn: isShowing(.keys)) { model.show(.keys) }
+                footerButton(model.remote.isOn ? "Phone access on" : "Phone Access", icon: "iphone", isOn: isShowing(.remote)) { model.show(.remote) }
                 footerButton("New Host", icon: "plus") { model.newHost() }
                 footerButton("Import ~/.ssh/config", icon: "square.and.arrow.down") { model.store.importSSHConfig() }
             }

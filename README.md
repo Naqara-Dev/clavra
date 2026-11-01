@@ -55,6 +55,19 @@ there is no account. Calm to look at: warm ink in the dark, paper in the light, 
 - Make a new Ed25519 key (the Mac's own `ssh-keygen`, the passphrase passed through askpass rather
   than the command line) and install its public key on a connected server.
 
+**From your phone**
+- Phone Access (⌥⌘3): turn it on, scan the QR code with a phone on the same Wi-Fi, allow the phone
+  on the Mac, and your tabs are in its browser. Nothing to install. The Mac does the terminal; the
+  phone draws the screen and types back, with a row for Esc, Tab, Ctrl and the arrows.
+- The QR code carries the Mac's address and a fresh 256-bit key after the `#`, so the key never
+  crosses the network. Everything on the socket is sealed with ChaCha20-Poly1305 (CryptoKit on the
+  Mac, `Clavra/Remote/aead.js` on the phone, checked against RFC 8439 and CryptoKit), bound to a
+  per-connection challenge and numbered so nothing can be replayed. Production tabs are view-only
+  from a phone unless you allow typing; access turns itself off after 30 idle minutes.
+- The page loads over plain HTTP (a phone won't trust a certificate the Mac makes up), so someone
+  able to rewrite traffic on the network as the page loads could tamper with it. Use it at home or
+  in the office, not on public Wi-Fi.
+
 **Everywhere you work**
 - Optionally keep hosts and snippets in iCloud Drive, so your other Macs see them. Passwords and
   passphrases stay in each Mac's Keychain.
@@ -99,9 +112,11 @@ Debug builds only:
 | `-ClavraForward 18080:8080,socks:1080,remote:9000:3000` | Adds tunnels that open on connect. |
 | `-ClavraSplit beside,below` | Splits the new tab. |
 | `-ClavraStartup 'cd /srv'` | Sets the command typed once the shell is up. |
+| `-ClavraRemote YES` | Turns on Phone Access and prints the link. |
+| `-ClavraRemoteAllow YES` | Allows phones without asking (testing only). |
 | `-ClavraPanel files` or `ports` | Opens that panel beside the terminal. |
 | `-ClavraSnippets YES` | Opens the snippet palette. |
-| `-ClavraPage keys` or `snippets` | Shows that page instead of "Where to?". |
+| `-ClavraPage keys`, `snippets` or `remote` | Shows that page instead of "Where to?". |
 
 To try a real connection without touching System Settings, run a throwaway `sshd` as yourself on
 localhost: generate a host key and a client key with `ssh-keygen`, point a small `sshd_config` at them
