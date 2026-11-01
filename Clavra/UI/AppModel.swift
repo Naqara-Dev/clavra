@@ -10,6 +10,7 @@ final class AppModel {
 
     let store = HostStore()
     let snippets = SnippetStore()
+    let identities = IdentityStore()
     let health = HealthMonitor()
     let remote = RemoteAccess()
     /// Every open terminal, in every tab and pane.
@@ -79,7 +80,7 @@ final class AppModel {
 
     /// A new tab with one terminal.
     func open(_ server: Server, through jump: Server? = nil) {
-        let session = start(server, through: jump ?? jumpHost(for: server))
+        let session = start(resolved(server), through: jump.map(resolved) ?? jumpHost(for: server))
         let tab = TabGroup(session.id)
         tabs.append(tab)
         selection = tab.id
@@ -299,7 +300,7 @@ final class AppModel {
     func save(_ server: Server) {
         store.save(server)
         for session in sessions where session.server.id == server.id {
-            if case .failed = session.state { session.retry(with: server, jump: jumpHost(for: server)) }
+            if case .failed = session.state { session.retry(with: resolved(server), jump: jumpHost(for: server)) }
         }
     }
 
@@ -307,6 +308,7 @@ final class AppModel {
 
     /// The same connection as a plain `ssh` line, for a terminal elsewhere.
     func sshCommand(for server: Server) -> String {
+        let server = resolved(server)
         var parts = ["ssh"]
         if server.port != 22 { parts += ["-p", String(server.port)] }
         if server.auth == .key, let key = server.keyPath { parts += ["-i", key] }
@@ -325,7 +327,36 @@ final class AppModel {
     /// The saved host to go through. A host can't jump through itself.
     func jumpHost(for server: Server) -> Server? {
         guard let id = server.jump, id != server.id else { return nil }
-        return store.host(id)
+        return store.host(id).map(resolved)
+    }
+
+    /// The host as it will sign in: an identity, when it has one, supplies the user, the method and
+    /// the key. The saved host keeps pointing at the identity, so editing it changes every host.
+    func resolved(_ server: Server) -> Server {
+        guard let identity = identities.identity(server.identity) else { return server }
+        var copy = server
+        copy.user = identity.user
+        copy.auth = identity.auth
+        copy.keyPath = identity.keyPath
+        return copy
+    }
+
+    func hosts(signingInAs identity: Identity) -> [Server] {
+        store.hosts.filter { $0.identity == identity.id }
+    }
+
+    /// Hosts that signed in as this identity get their own copy of it, secret included, so
+    /// deleting it never locks anyone out.
+    func deleteIdentity(_ identity: Identity) {
+        let password = Keychain.password(for: identity.id)
+        let passphrase = Keychain.passphrase(for: identity.id)
+        for host in hosts(signingInAs: identity) {
+            var copy = resolved(host)
+            copy.identity = nil
+            if copy.auth == .password { Keychain.setPassword(password, for: copy.id) } else { Keychain.setPassphrase(passphrase, for: copy.id) }
+            store.save(copy)
+        }
+        identities.delete(identity)
     }
 
     /// Hosts and snippets move between this Mac and iCloud Drive. Whatever is already in the new
@@ -346,5 +377,6 @@ final class AppModel {
         guard Library.syncsWithICloud else { return }
         store.reload()
         snippets.reload()
+        identities.reload()
     }
 }

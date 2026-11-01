@@ -46,7 +46,8 @@ Most SSH clients treat every server the same. Clavra knows the one that pays you
 | **Tunnels** | Local, remote and SOCKS (`ssh -L`, `-R`, `-D`). The ports the server listens on are offered one click away; tunnels saved with a host open on every connect. |
 | **Server health** | How fast each host answers, in the sidebar. While connected: load, memory, disk and uptime, turning coral when something runs hot. |
 | **Phone Access** | Scan a QR code and your tabs open in the phone's browser, end-to-end encrypted. Production tabs are view only from a phone unless you allow typing. |
-| **Sign-in** | Ed25519, RSA and ECDSA keys (passphrases supported) or passwords, jump hosts, and host keys checked against `~/.ssh/known_hosts`. Import `~/.ssh/config` in one click. |
+| **Sign-in** | Ed25519, RSA and ECDSA keys (passphrases supported) or passwords, jump hosts, and host keys checked against `~/.ssh/known_hosts`. Save a user and key once as an identity and share it across hosts. Import `~/.ssh/config` in one click. |
+| **Hosts** | Home lists every host by place with Connect, Test Connection and Edit on each. Tags, and a sidebar you can group by place or tag and fold shut. |
 | **Keys** | Every key in `~/.ssh` with its type, age and the hosts that use it. Weak or world-readable keys are called out; a new Ed25519 key is one click. |
 | **And** | Find in scrollback, snippets (⌘;), reconnecting on its own, `ssh://` links, a menu bar host list, tabs restored on launch, iCloud Drive sync and in-place updates. |
 
@@ -72,7 +73,7 @@ Step 2 is once only: updates install in place from **Clavra › Check for Update
 
 <img src="docs/screenshots/phone.jpg" alt="A Clavra tab in a phone browser" width="230" align="right">
 
-Turn on **Phone Access**, point the phone's camera at the QR code, and allow the phone on the Mac. Your tabs open in the phone's browser with Esc, Tab, Ctrl and the arrows a tap away.
+Turn on **Phone Access**, point the phone's camera at the QR code, and allow the phone on the Mac. Your tabs open in the phone's browser with Esc, Tab, Ctrl and the arrows a tap away; scroll back through earlier output, or open a saved host in a new tab from the phone.
 
 - **From anywhere.** Phone and Mac meet through [clavra.naqara.dev](https://clavra.naqara.dev) over HTTPS, or straight over your Wi-Fi if you prefer.
 - **The relay can't read it.** Everything is sealed with ChaCha20-Poly1305 under a key that exists only in the QR code. The relay passes along data it can't open.

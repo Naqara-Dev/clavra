@@ -13,7 +13,7 @@ struct KeysView: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Keys").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.ink)
-                        Text("The private keys in ~/.ssh, checked. Nothing here leaves your Mac.")
+                        Text("Who you sign in as, and the private keys in ~/.ssh. Nothing here leaves your Mac.")
                             .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                     }
                     Spacer()
@@ -27,6 +27,10 @@ struct KeysView: View {
                         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
                         .padding(.bottom, 14)
                 }
+
+                IdentitiesSection(model: model).padding(.bottom, 28)
+
+                Text("Keys in ~/.ssh").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink).padding(.bottom, 10)
 
                 if keys.isEmpty {
                     Text("No private keys in ~/.ssh yet. Make one to sign in without passwords.")
@@ -59,7 +63,7 @@ struct KeysView: View {
     private func reload() { keys = SSHKeys.scan() }
 
     private func hosts(using key: SSHKeyInfo) -> [Server] {
-        model.store.hosts.filter { host in
+        model.store.hosts.map(model.resolved).filter { host in
             guard host.auth == .key else { return false }
             if let path = host.keyPath { return Credentials.expand(path) == Credentials.expand(key.path) }
             let fallback = Credentials.defaultKeys.first { FileManager.default.fileExists(atPath: Credentials.expand($0)) }

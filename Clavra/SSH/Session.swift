@@ -575,7 +575,7 @@ final class Session: Identifiable {
     }
 
     /// Plain words for the errors people actually hit.
-    static func describe(_ error: Error) -> String {
+    nonisolated static func describe(_ error: Error) -> String {
         if let error = error as? ClavraError, let text = error.errorDescription { return text }
         let raw = String(describing: error)
         if raw.contains("allAuthenticationOptionsFailed") || raw.contains("authentication") {

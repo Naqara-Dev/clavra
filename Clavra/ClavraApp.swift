@@ -130,7 +130,7 @@ struct RootView: View {
         }
         .animation(.easeOut(duration: 0.15), value: model.remote.waiting)
         .sheet(item: $model.editing) { server in
-            HostEditor(server: server, isNew: !model.isSaved(server), others: model.store.hosts,
+            HostEditor(server: server, isNew: !model.isSaved(server), others: model.store.hosts, model: model,
                        save: { saved, connect in
                            model.save(saved)
                            if connect { model.open(saved) }
@@ -167,7 +167,10 @@ struct RootView: View {
             if let server = model.store.hosts.first(where: { $0.title == name }) { model.open(server) }
         }
         if let page = UserDefaults.standard.string(forKey: "ClavraPage") {
-            model.show(["keys": .keys, "snippets": .snippets, "remote": .remote][page] ?? .home)
+            // After restored tabs, which would otherwise come to the front.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                model.show(["keys": .keys, "snippets": .snippets, "remote": .remote][page] ?? .home)
+            }
         }
         if let target = UserDefaults.standard.string(forKey: "ClavraOpen"), let server = Server(quick: target) { debugOpen(server) }
         if let panel = UserDefaults.standard.string(forKey: "ClavraPanel") {

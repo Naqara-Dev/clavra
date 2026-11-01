@@ -49,16 +49,18 @@ enum Credentials {
         }
     }
 
-    static func method(for server: Server) throws -> SSHAuthenticationMethod {
+    /// `password` and `passphrase`, when given, stand in for what's saved (Test Connection uses
+    /// what's typed in the editor before it's saved).
+    static func method(for server: Server, password typedPassword: String? = nil, passphrase typedPassphrase: String? = nil) throws -> SSHAuthenticationMethod {
         switch server.auth {
         case .password:
-            guard let password = Keychain.password(for: server.id) else { throw ClavraError.noPassword }
+            guard let password = typedPassword.flatMap({ $0.isEmpty ? nil : $0 }) ?? Keychain.password(for: server.secretsID) else { throw ClavraError.noPassword }
             return .passwordBased(username: server.user, password: password)
         case .key:
             let path = server.keyPath ?? defaultKeys.first { FileManager.default.fileExists(atPath: expand($0)) }
             guard let path else { throw ClavraError.noKey }
             guard let text = try? String(contentsOfFile: expand(path), encoding: .utf8) else { throw ClavraError.unreadableKey(path) }
-            let passphrase = Keychain.passphrase(for: server.id).map { Data($0.utf8) }
+            let passphrase = (typedPassphrase.flatMap { $0.isEmpty ? nil : $0 } ?? Keychain.passphrase(for: server.secretsID)).map { Data($0.utf8) }
             do {
                 let type = try SSHKeyDetection.detectPrivateKeyType(from: text)
                 switch type {

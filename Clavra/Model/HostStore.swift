@@ -51,6 +51,7 @@ final class HostStore {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         let found = q.isEmpty ? hosts : hosts.filter {
             $0.title.lowercased().contains(q) || $0.address.lowercased().contains(q) || $0.user.lowercased().contains(q)
+                || $0.tags.contains { $0.lowercased().contains(q) }
         }
         return [Server.Place.production, .staging, .personal].compactMap { place in
             let list = found.filter { $0.place == place }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }

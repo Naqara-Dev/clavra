@@ -1,5 +1,5 @@
 // Pretends to be a phone against Clavra's Phone Access: node Tests/phone.js <aead.js> <link> [production]
-// Loads the page, joins, types, reconnects with the token the Mac gave it, replays a frame, and tries
+// Loads the page, joins, types, scrolls back, reconnects with the token the Mac gave it, replays a frame, and tries
 // a wrong key. Prints one line per check; exits 1 on any failure.
 const aead = require(require("path").resolve(process.argv[2]));
 const link = new URL(process.argv[3]);
@@ -64,6 +64,15 @@ function connect(useKey, hello) {
     phone.send({ t: "input", data: "x", session: "00000000-0000-0000-0000-000000000000" });
     await sleep(800);
     check(phone.messages.some((m) => m.t === "readonly"), "typing aimed at another tab is refused");
+    // Enough output to push the first lines off the screen: they still reach the phone, once each.
+    phone.send({ t: "input", data: "seq -f 'line-%03g' 1 120\r", session: phone.session });
+    await sleep(2500);
+    const screens = phone.messages.filter((m) => m.t === "screen" && !m.empty);
+    const latest = screens[screens.length - 1] || {};
+    const sent = screens.flatMap((m) => m.rows).map(([, row]) => JSON.parse(row).map((r) => r[0]).join(""));
+    check(latest.start < latest.end - 40 && sent.includes("line-001") && sent.includes("line-120"),
+          "earlier output stays for scrolling back");
+    check(sent.filter((row) => row === "line-001").length === 1, "lines that scrolled off are sent once");
   }
   phone.ws.send(phone.last);
   await sleep(1000);

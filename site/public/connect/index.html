@@ -35,10 +35,33 @@
   #note.show { display: block; }
   #note b { color: var(--ink); font-weight: 600; }
   #note.warn { border-color: rgba(226,133,122,.4); }
-  #screen { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; background: var(--terminal);
-    margin: 10px 10px 0; border-radius: 12px; padding: 8px;
+  .screen-wrap { flex: 1; min-height: 0; position: relative; display: flex; margin: 10px 10px 0; }
+  #screen { flex: 1; min-width: 0; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; background: var(--terminal);
+    border-radius: 12px; padding: 8px; overscroll-behavior: contain;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); white-space: pre; line-height: 1.25; }
   #screen .row { min-height: 1.25em; }
+  #screen.fit { overflow-x: hidden; }
+  #latest { position: absolute; right: 10px; bottom: 10px; display: inline-flex; align-items: center; gap: 4px; height: 34px;
+    padding: 0 12px 0 9px; border-radius: 17px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    font: 500 13px -apple-system, system-ui, sans-serif; }
+  header #new svg { display: block; margin: auto; }
+  #picker { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; z-index: 5; }
+  .sheet { width: 100%; max-height: 80%; overflow: auto; background: var(--window); border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0; padding: 14px 14px max(18px, env(safe-area-inset-bottom)); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .sheet-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .sheet-head button { background: none; border: 0; color: var(--secondary); min-width: 44px; min-height: 44px; }
+  .sheet-note { margin: 0 0 6px; color: var(--tertiary); font-size: 13px; }
+  #host-list .group { margin: 14px 2px 6px; font-size: 12.5px; color: var(--secondary); }
+  #host-list .group::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px;
+    vertical-align: 1px; background: #93c7a6; }
+  #host-list .group.production::before { background: var(--coral); }
+  #host-list .group.staging::before { background: #8fb3dc; }
+  #host-list button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left;
+    margin-bottom: 6px; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    font: 15px -apple-system, system-ui, sans-serif; }
+  #host-list button b { font-weight: 600; }
+  #host-list button span { color: var(--tertiary); font-size: 13px; }
   .cursor { outline: 1.5px solid var(--brass); outline-offset: -1px; }
   #keys { display: flex; gap: 6px; padding: 8px 10px 0; overflow-x: auto; scrollbar-width: none; }
   #keys::-webkit-scrollbar { display: none; }
@@ -49,7 +72,7 @@
   #input { flex: 1; min-width: 0; background: var(--field); color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
     padding: 10px 12px; font: 16px ui-monospace, "SF Mono", Menlo, monospace; }
   #input:disabled { opacity: .45; }
-  #send { background: var(--brass); color: #1d1810; border: 0; border-radius: 10px; padding: 0 14px; min-width: 48px; font: 600 14px -apple-system, system-ui, sans-serif; }
+  #send { background: var(--brass); color: #1d1810; border: 0; border-radius: 10px; padding: 0 14px; min-width: 48px; display: grid; place-items: center; }
   .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px; gap: 8px; }
   .center h1 { font-size: 20px; margin: 0; font-weight: 600; }
   .center p { margin: 0; color: var(--secondary); max-width: 300px; line-height: 1.45; }
@@ -91,18 +114,22 @@
   <header id="bar" hidden>
     <span class="dot" id="dot"></span>
     <select id="tabs" aria-label="Tab"></select>
+    <button id="new" type="button" aria-label="Open a saved host" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
     <button id="fit" type="button" aria-label="Text size">Aa</button>
   </header>
   <div id="note"></div>
-  <div id="screen" hidden></div>
+  <div class="screen-wrap" id="wrap" hidden>
+    <div id="screen"></div>
+    <button id="latest" type="button" hidden aria-label="Back to the latest output"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>Latest</button>
+  </div>
   <div id="keys" hidden>
     <button data-key="esc">esc</button>
     <button data-key="tab">tab</button>
     <button data-key="ctrl" id="ctrl">ctrl</button>
-    <button data-key="up">↑</button>
-    <button data-key="down">↓</button>
-    <button data-key="left">←</button>
-    <button data-key="right">→</button>
+    <button data-key="up" aria-label="Up">&#x2191;&#xFE0E;</button>
+    <button data-key="down" aria-label="Down">&#x2193;&#xFE0E;</button>
+    <button data-key="left" aria-label="Left">&#x2190;&#xFE0E;</button>
+    <button data-key="right" aria-label="Right">&#x2192;&#xFE0E;</button>
     <button data-key="cc">⌃C</button>
     <button data-key="cd">⌃D</button>
     <button data-key="pipe">|</button>
@@ -111,8 +138,18 @@
   </div>
   <form id="form" hidden autocomplete="off">
     <input id="input" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="Type here">
-    <button id="send" type="submit">↩</button>
+    <button id="send" type="submit" aria-label="Return"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 10l-5 5 5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></button>
   </form>
+  <div id="picker" hidden>
+    <div class="sheet" role="dialog" aria-labelledby="picker-title">
+      <div class="sheet-head">
+        <h2 id="picker-title">Open a host</h2>
+        <button id="picker-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <p class="sheet-note">Opens a new tab on your Mac, signed in with what Clavra saved there.</p>
+      <div id="host-list"></div>
+    </div>
+  </div>
   <script src="aead.js"></script>
   <script src="remote.js"></script>
 </body>

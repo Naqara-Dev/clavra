@@ -35,6 +35,12 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var forwards: [Forward] = []
     /// Ask before risky commands. Nil follows the place: on for production, off elsewhere.
     var guardOverride: Bool?
+    /// A saved identity to sign in as; when set, it supplies the user, key and password.
+    var identity: UUID?
+    /// Words to find and group hosts by: "nginx", "client-a", "db".
+    var tags: [String] = []
+    /// Where this host's password or passphrase is kept: its identity's, or its own.
+    var secretsID: UUID { identity ?? id }
     /// Typed into the shell once it's up, e.g. `cd /srv/app && tmux attach`.
     var startup = ""
     var notes = ""
@@ -167,7 +173,7 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
 
 extension Server {
     private enum CodingKeys: String, CodingKey {
-        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride, startup, notes
+        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride, startup, notes, identity, tags
     }
 
     /// Every field but the address is optional on disk, so files from older versions (or written by
@@ -188,6 +194,8 @@ extension Server {
         guardOverride = try c.decodeIfPresent(Bool.self, forKey: .guardOverride)
         startup = try c.decodeIfPresent(String.self, forKey: .startup) ?? ""
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        identity = try c.decodeIfPresent(UUID.self, forKey: .identity)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
     }
 
     /// A copy with a new identity, for "Duplicate".

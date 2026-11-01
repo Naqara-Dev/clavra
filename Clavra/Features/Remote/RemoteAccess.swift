@@ -291,8 +291,14 @@ final class RemoteAccess {
         var received = 0
         var sent = 0
         var session: Session.ID?
-        var seen: [String] = []
+        /// What this phone has of the tab it watches, by scroll-invariant line number.
+        var seen: [Int: String] = [:]
         var signature = ""
+        var oldest = 0
+        /// The screen's top line when this phone was last sent it.
+        var top = 0
+        var cols = 0
+        var alternate = false
 
         init(write: @escaping (Data) -> Void, close: @escaping () -> Void) {
             writer = write
@@ -396,7 +402,18 @@ final class RemoteAccess {
             guard link.allowed, let raw = message["session"] as? String, let id = UUID(uuidString: raw),
                   model?.session(id) != nil else { return }
             link.session = id
-            link.seen = []
+            link.seen = [:]
+            link.oldest = 0
+            sendSessions(to: link)
+            sendScreen(to: link, full: true)
+        case "open":
+            // A saved host, opened in a new tab on the Mac; the phone moves to it.
+            guard link.allowed, let raw = message["host"] as? String, let id = UUID(uuidString: raw),
+                  let model, let server = model.store.host(id) else { return }
+            model.open(server)
+            link.session = model.current?.id
+            link.seen = [:]
+            link.oldest = 0
             sendSessions(to: link)
             sendScreen(to: link, full: true)
         case "input":
@@ -425,7 +442,8 @@ final class RemoteAccess {
         let session = model.current ?? model.sessions.first
         if link.session != session?.id {
             link.session = session?.id
-            link.seen = []
+            link.seen = [:]
+            link.oldest = 0
             link.signature = ""
         }
         return session
@@ -441,6 +459,7 @@ final class RemoteAccess {
     /// What a phone's tab list shows; when it changes, the list is sent again.
     private func signature() -> String {
         (model?.sessions ?? []).map { "\($0.id)|\($0.title)|\($0.isLive)|\($0.held?.command ?? "")|\(canType(in: $0))" }.joined(separator: "\n")
+            + (model?.store.hosts ?? []).map { "\($0.id)|\($0.title)" }.joined()
     }
 
     /// A terminal printed something; phones watching it get the changed rows, at most ~15 times a second.
@@ -467,19 +486,45 @@ final class RemoteAccess {
              "place": session.server.place.rawValue, "live": session.isLive, "typing": canType(in: session),
              "held": session.held?.command ?? ""]
         }
-        link.send(["t": "sessions", "list": list, "selected": current?.id.uuidString ?? ""], key: key)
+        let hosts: [[String: Any]] = model.store.hosts
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            .map { ["id": $0.id.uuidString, "title": $0.title, "host": model.resolved($0).target, "place": $0.place.rawValue] }
+        link.send(["t": "sessions", "list": list, "hosts": hosts, "selected": current?.id.uuidString ?? ""], key: key)
     }
 
     private func sendScreen(to link: Link, full: Bool) {
         guard let session = target(of: link) else { return link.send(["t": "screen", "empty": true], key: key) }
-        let snapshot = ScreenSnapshot.rows(of: session.terminal)
+        let term = session.terminal.getTerminal()
+        let alternate = term.isCurrentBufferAlternate
+        var full = full || link.cols != term.cols || link.alternate != alternate
+        let oldest = ScreenSnapshot.oldestLine(of: term, hint: link.oldest)
+        if oldest < link.oldest { full = true }
+        if full { link.seen = [:] }
+        link.oldest = alternate ? 0 : oldest
+        link.cols = term.cols
+        link.alternate = alternate
+
+        let top = ScreenSnapshot.screenTop(of: term, oldest: oldest)
+        let end = top + term.rows
+        let start = alternate ? top : max(oldest, top - ScreenSnapshot.history)
         var changed: [[Any]] = []
-        for (index, row) in snapshot.rows.enumerated() where full || index >= link.seen.count || link.seen[index] != row {
-            changed.append([index, row])
+        var seen: [Int: String] = [:]
+        for row in start..<end {
+            // Lines that were already above the screen last time don't change any more; anything
+            // that was on screen then is checked again, since it may have changed on its way up.
+            if row < link.top, let known = link.seen[row] {
+                seen[row] = known
+                continue
+            }
+            let json = ScreenSnapshot.render(term.getScrollInvariantLine(row: row), of: term)
+            seen[row] = json
+            if link.seen[row] != json { changed.append([row, json]) }
         }
-        link.seen = snapshot.rows
-        link.send(["t": "screen", "session": session.id.uuidString, "cols": snapshot.cols, "count": snapshot.rows.count,
-                   "rows": changed, "cursor": snapshot.cursor, "full": full,
+        link.seen = seen
+        link.top = top
+        let cursor = term.getCursorLocation()
+        link.send(["t": "screen", "session": session.id.uuidString, "cols": term.cols, "start": start, "end": end,
+                   "rows": changed, "cursor": [cursor.x, top + cursor.y], "full": full,
                    "held": session.held?.command ?? "", "typing": canType(in: session)], key: key)
     }
 

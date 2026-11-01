@@ -18,7 +18,8 @@
 
   let socket = null, challenge = null, sent = 0, received = 0, stopped = false, token = "";
   try { token = localStorage.getItem("clavra-token-" + place) || ""; } catch (e) {}
-  let cols = 80, rows = [], cursor = [0, 0], typing = false, ctrl = false, fit = true, session = "";
+  // rows[i] is line number first + i: the scrollback the Mac keeps, then the screen.
+  let cols = 80, rows = [], first = 0, cursor = [0, 0], typing = false, ctrl = false, fit = true, session = "", hosts = [];
 
   const palette = ["#2a282e", "#e2857a", "#93c7a6", "#d8b46c", "#8fb3dc", "#c7a0d8", "#8ccbc7", "#d9d6cf",
                    "#5a5660", "#ee9a8f", "#a9d9b9", "#e6c68a", "#a8c6e8", "#d6b5e4", "#a4dcd8", "#f2efe8"];
@@ -70,12 +71,12 @@
     $("intro").hidden = false;
     $("intro").querySelector("h1").textContent = title;
     $("intro-text").textContent = text;
-    for (const id of ["bar", "screen", "keys", "form"]) $(id).hidden = true;
+    for (const id of ["bar", "wrap", "keys", "form"]) $(id).hidden = true;
   }
 
   function showTerminal() {
     $("intro").hidden = true;
-    for (const id of ["bar", "screen", "keys", "form"]) $(id).hidden = false;
+    for (const id of ["bar", "wrap", "keys", "form"]) $(id).hidden = false;
   }
 
   function note(html, warn) {
@@ -89,6 +90,7 @@
 
   function drawRow(index) {
     const runs = rows[index] || [];
+    const line = first + index;
     let html = "", column = 0;
     for (const [text, fg, bg, flags] of runs) {
       let foreground = color(fg), background = color(bg);
@@ -101,7 +103,7 @@
       if (flags & 32) style.push("opacity:.6");
       if (flags & 64) style.push("font-style:italic");
       const chars = Array.from(text);
-      if (cursor[1] === index && cursor[0] >= column && cursor[0] < column + chars.length) {
+      if (cursor[1] === line && cursor[0] >= column && cursor[0] < column + chars.length) {
         const at = cursor[0] - column;
         html += `<span style="${style.join(";")}">${escape(chars.slice(0, at).join(""))}<span class="cursor">${escape(chars[at])}</span>${escape(chars.slice(at + 1).join(""))}</span>`;
       } else {
@@ -109,34 +111,61 @@
       }
       column += chars.length;
     }
-    if (cursor[1] === index && cursor[0] >= column) html += " ".repeat(cursor[0] - column) + '<span class="cursor"> </span>';
+    if (cursor[1] === line && cursor[0] >= column) html += " ".repeat(cursor[0] - column) + '<span class="cursor"> </span>';
     return html;
   }
 
-  function draw() {
+  // Only the rows that changed are drawn again; scrolled-off lines arrive once and stay.
+  function draw(dirty, follow) {
     const screen = $("screen");
     while (screen.children.length < rows.length) { const div = document.createElement("div"); div.className = "row"; screen.appendChild(div); }
     while (screen.children.length > rows.length) screen.lastChild.remove();
-    for (let i = 0; i < rows.length; i++) screen.children[i].innerHTML = drawRow(i);
-    sizeText();
+    for (const i of dirty) if (i >= 0 && i < rows.length) screen.children[i].innerHTML = drawRow(i);
+    sizeText(follow);
+  }
+
+  function atBottom() {
+    const screen = $("screen");
+    return screen.scrollTop + screen.clientHeight >= screen.scrollHeight - 24;
+  }
+
+  // The width of one character for each pixel of font size, measured in the font the phone has.
+  let ratio = 0;
+  function charRatio() {
+    if (ratio) return ratio;
+    const probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font-size:100px;font-family:inherit";
+    probe.textContent = "M".repeat(50);
+    $("screen").appendChild(probe);
+    ratio = probe.getBoundingClientRect().width / 5000 || 0.602;
+    probe.remove();
+    return ratio;
   }
 
   // Fit the Mac's columns to the phone's width (never below a size you can read), or a comfortable
-  // size that scrolls sideways. Either way the cursor's row stays in view.
-  function sizeText() {
+  // size that scrolls sideways. While you're at the bottom, the cursor's row stays in view; scrolled
+  // up into earlier output, the page stays where you are.
+  function sizeText(follow) {
     const screen = $("screen");
     const width = screen.clientWidth - 16;
-    const size = fit ? Math.max(7.5, Math.min(15, width / (cols * 0.602))) : 13;
+    const size = fit ? Math.max(7.5, Math.min(15, Math.floor(width / (cols * charRatio()) * 10) / 10)) : 13;
     screen.style.fontSize = size + "px";
-    const row = screen.children[cursor[1]];
-    if (row) {
-      const top = row.offsetTop - screen.offsetTop, bottom = top + row.offsetHeight;
-      if (top < screen.scrollTop || bottom > screen.scrollTop + screen.clientHeight) screen.scrollTop = bottom - screen.clientHeight + 8;
-      if (!fit) {
-        const x = cursor[0] * size * 0.602;
-        if (x < screen.scrollLeft || x > screen.scrollLeft + width) screen.scrollLeft = Math.max(0, x - width / 2);
+    screen.classList.toggle("fit", fit && cols * charRatio() * size <= width + 1);
+    if (fit && screen.classList.contains("fit")) screen.scrollLeft = 0;
+    if (follow !== false) {
+      const row = screen.children[cursor[1] - first];
+      if (row) {
+        const top = row.offsetTop - screen.offsetTop, bottom = top + row.offsetHeight;
+        if (top < screen.scrollTop || bottom > screen.scrollTop + screen.clientHeight) screen.scrollTop = bottom - screen.clientHeight + 8;
+        if (!fit) {
+          const x = cursor[0] * size * charRatio();
+          if (x < screen.scrollLeft || x > screen.scrollLeft + width) screen.scrollLeft = Math.max(0, x - width / 2);
+        }
+      } else {
+        screen.scrollTop = screen.scrollHeight;
       }
     }
+    $("latest").hidden = atBottom();
   }
 
   // iOS keeps the page tall when the keyboard opens and slides it up instead; follow the visible
@@ -146,7 +175,7 @@
     if (!view) return;
     document.documentElement.style.setProperty("--height", view.height + "px");
     window.scrollTo(0, 0);
-    sizeText();
+    sizeText(atBottom());
   }
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", followViewport);
@@ -174,22 +203,52 @@
         for (const item of message.list) {
           const option = document.createElement("option");
           option.value = item.id;
-          option.textContent = (item.place === "production" ? "● " : "") + item.title + (item.live ? "" : " (not connected)");
+          option.textContent = (item.place === "production" ? "\u25CF\uFE0E " : "") + item.title + (item.live ? "" : " (not connected)");
           select.appendChild(option);
         }
-        if (!message.list.length) note("No tabs are open on the Mac.");
+        if (!message.list.length) {
+          const option = document.createElement("option");
+          option.textContent = "No tabs open";
+          option.value = "";
+          select.appendChild(option);
+        }
         select.value = message.selected;
         session = message.selected;
+        hosts = message.hosts || [];
+        $("new").hidden = !hosts.length;
+        if (!$("picker").hidden) drawHosts();
         break;
       }
-      case "screen":
+      case "screen": {
         showTerminal();
-        if (message.empty) { rows = []; draw(); note("No tabs are open on the Mac."); break; }
-        if (message.full || message.session !== session) rows = new Array(message.count).fill([]);
+        if (message.empty) {
+          rows = []; first = 0; $("screen").innerHTML = "";
+          note(hosts.length ? "No tabs are open on the Mac. Tap + to open one." : "No tabs are open on the Mac.");
+          break;
+        }
+        // Clavra 0.4 sends only the screen, numbered from 0, with no scrollback.
+        if (message.start === undefined) { message.start = 0; message.end = message.count; }
+        const follow = message.full || message.session !== session || atBottom();
+        const dirty = new Set();
+        if (message.full || message.session !== session) {
+          rows = []; first = message.start; $("screen").innerHTML = "";
+        }
         session = message.session;
-        cols = message.cols; cursor = message.cursor; rows.length = message.count;
-        for (const [index, row] of message.rows) rows[index] = JSON.parse(row);
-        draw();
+        // Lines the Mac no longer keeps fall off the top.
+        if (message.start > first) {
+          const drop = Math.min(message.start - first, rows.length);
+          rows.splice(0, drop);
+          const screen = $("screen");
+          for (let i = 0; i < drop && screen.firstChild; i++) screen.firstChild.remove();
+          first = message.start;
+        }
+        rows.length = Math.max(0, message.end - first);
+        for (let i = 0; i < rows.length; i++) if (rows[i] === undefined) { rows[i] = []; dirty.add(i); }
+        for (const [line, row] of message.rows) { rows[line - first] = JSON.parse(row); dirty.add(line - first); }
+        dirty.add(cursor[1] - first);
+        cols = message.cols; cursor = message.cursor;
+        dirty.add(cursor[1] - first);
+        draw(dirty, follow);
         typing = message.typing;
         $("input").disabled = !typing;
         $("input").placeholder = typing ? "Type here" : "View only";
@@ -197,6 +256,7 @@
         else if (!typing) note("Production tab: view only. Typing can be allowed in Clavra on the Mac.");
         else note("");
         break;
+      }
       case "readonly":
         note("This tab is view only from a phone.", true);
         break;
@@ -241,8 +301,37 @@
     };
   }
 
+  // Saved hosts on the Mac, to open one in a new tab.
+  function drawHosts() {
+    const list = $("host-list");
+    list.innerHTML = "";
+    const order = { production: 0, staging: 1, personal: 2 };
+    const label = { production: "Production", staging: "Staging", personal: "Personal" };
+    let group = "";
+    for (const host of hosts.slice().sort((a, b) => (order[a.place] ?? 3) - (order[b.place] ?? 3))) {
+      if (host.place !== group) {
+        group = host.place;
+        const heading = document.createElement("p");
+        heading.className = "group " + group;
+        heading.textContent = label[group] || group;
+        list.appendChild(heading);
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.innerHTML = `<b>${escape(host.title)}</b><span>${escape(host.host)}</span>`;
+      button.addEventListener("click", () => {
+        send({ t: "open", host: host.id });
+        $("picker").hidden = true;
+        note("Opening " + escape(host.title) + "\u2026");
+      });
+      list.appendChild(button);
+    }
+  }
+
   function type(text) {
     if (!typing || !text) return;
+    const screen = $("screen");
+    if (!atBottom()) screen.scrollTop = screen.scrollHeight;
     if (ctrl && text.length === 1) {
       const code = text.toUpperCase().charCodeAt(0);
       if (code >= 64 && code <= 95) text = String.fromCharCode(code - 64);
@@ -276,8 +365,14 @@
   $("input").addEventListener("input", () => { if ($("input").value) { type($("input").value); $("input").value = ""; } });
   $("form").addEventListener("submit", (event) => { event.preventDefault(); type("\r"); });
   $("tabs").addEventListener("change", () => send({ t: "select", session: $("tabs").value }));
-  $("fit").addEventListener("click", () => { fit = !fit; sizeText(); });
-  window.addEventListener("resize", sizeText);
-  $("screen").addEventListener("click", () => $("input").focus());
+  $("fit").addEventListener("click", () => { fit = !fit; $("screen").scrollLeft = 0; sizeText(); });
+  $("new").addEventListener("click", () => { drawHosts(); $("picker").hidden = false; });
+  $("picker-close").addEventListener("click", () => { $("picker").hidden = true; });
+  $("picker").addEventListener("click", (event) => { if (event.target === $("picker")) $("picker").hidden = true; });
+  $("latest").addEventListener("click", () => { const screen = $("screen"); screen.scrollTop = screen.scrollHeight; sizeText(false); });
+  $("screen").addEventListener("scroll", () => { $("latest").hidden = atBottom(); }, { passive: true });
+  window.addEventListener("resize", () => sizeText(atBottom()));
+  // A tap focuses the field, unless it ended a scroll or picked out text.
+  $("screen").addEventListener("click", () => { if (!String(window.getSelection() || "")) $("input").focus(); });
   connect();
 })();
