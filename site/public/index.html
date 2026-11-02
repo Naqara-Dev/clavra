@@ -68,8 +68,8 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "SSH client",
             "operatingSystem": "macOS 15 or later",
-            "softwareVersion": "0.4.0",
-            "fileSize": "10.6 MB",
+            "softwareVersion": "0.5.1",
+            "fileSize": "10.7 MB",
             "downloadUrl": "https://github.com/Naqara-Dev/clavra/releases/latest",
             "installUrl": "https://github.com/Naqara-Dev/clavra/releases/latest",
             "image": "https://clavra.naqara.dev/img/icon-512.png",
@@ -122,7 +122,7 @@
               {
                 "@type": "Question",
                 "name": "Does Clavra work with my ~/.ssh/config?",
-                "acceptedAnswer": { "@type": "Answer", "text": "Yes. Import the hosts from ~/.ssh/config in one click, including their user, port and key. Host keys already in ~/.ssh/known_hosts are trusted." }
+                "acceptedAnswer": { "@type": "Answer", "text": "Yes. Clavra shows every host in ~/.ssh/config before importing it, with its user, port, key and jump host, following Host * defaults and Include. Keys are matched to hosts automatically, and host keys already in ~/.ssh/known_hosts are trusted." }
               },
               {
                 "@type": "Question",
@@ -145,10 +145,14 @@
           <img src="/img/icon-192.png" width="30" height="30" alt="" />
           <span>Clavra</span>
         </a>
-        <nav class="top__nav" aria-label="Main">
-          <a href="#features">Features</a>
+        <button class="top__menu" type="button" aria-expanded="false" aria-controls="nav" data-menu>
+          <span class="top__menu-lines" aria-hidden="true"></span><span class="top__menu-label">Menu</span>
+        </button>
+        <nav class="top__nav" id="nav" aria-label="Main">
+          <a href="#features" data-section="features">Features</a>
+          <a href="#phone" data-section="phone">Phone</a>
           <a href="/connect/">Connect phone</a>
-          <a href="#faq">Questions</a>
+          <a href="#faq" data-section="faq">Questions</a>
           <a class="top__download" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download</a>
         </nav>
       </div>
@@ -159,7 +163,7 @@
       <section class="hero">
         <div class="wrap hero__grid">
           <div class="hero__copy">
-            <h1>Every server, one key.</h1>
+            <h1 class="hero__title" aria-label="Every server, one key."><span aria-hidden="true">Every</span> <span aria-hidden="true">server,</span> <span aria-hidden="true">one</span> <span aria-hidden="true">key.</span></h1>
             <p class="hero__lede">
               Clavra is an SSH client for the Mac that knows which servers are production, and
               asks before a command you can't take back.
@@ -171,14 +175,18 @@
             <p class="hero__fine">Free. macOS 15 or later, Apple Silicon and Intel. No account.</p>
           </div>
 
-          <div class="guard" aria-label="An example: Clavra holds back rm -rf on a production server">
-            <div class="guard__bar"><span class="place place--production">Production</span> api-prod</div>
+          <div class="guard" data-guard aria-label="An example: Clavra holds back risky commands on a production server">
+            <div class="guard__bar">
+              <span class="guard__lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="place place--production">Production</span><span class="guard__host">api-prod</span>
+              <span class="guard__count" aria-live="polite"><span data-held>0</span> held</span>
+            </div>
             <div class="guard__screen">
-              <p class="term"><span class="term__prompt">deploy@api-prod:~/app$</span> <span class="term__typed" data-typed>rm -rf /var/www/releases</span><span class="term__caret" aria-hidden="true"></span></p>
-              <div class="ask" data-ask>
-                <p class="ask__title"><span class="dot dot--production" aria-hidden="true"></span>Run this on api-prod?</p>
-                <p class="ask__command">rm -rf /var/www/releases</p>
-                <p class="ask__why">Deletes files without asking. Nothing has been sent yet.</p>
+              <p class="term"><span class="term__prompt">deploy@api-prod:~/app$</span> <span class="term__typed" data-typed>rm -rf /var/www/releases</span><span class="term__caret" aria-hidden="true"></span><kbd class="term__key" data-key aria-hidden="true">Return</kbd></p>
+              <div class="ask is-in" data-ask>
+                <p class="ask__title">Run this on api-prod?</p>
+                <p class="ask__command" data-ask-command>rm -rf /var/www/releases</p>
+                <p class="ask__why" data-ask-why>Deletes files without asking. Nothing has been sent yet.</p>
                 <div class="ask__buttons">
                   <button type="button" class="button button--brass button--small" data-answer="stop">Don't Run</button>
                   <button type="button" class="button button--coral button--small" data-answer="run">Run It</button>
@@ -190,10 +198,30 @@
         </div>
 
         <div class="wrap">
-          <figure class="window window--hero">
+          <figure class="window window--hero" data-parallax>
             <img src="/img/hero.jpg" width="1600" height="978" fetchpriority="high"
               alt="Clavra on a Mac: hosts grouped as Production, Staging and Personal with how fast each answers, and a production tab split in two, a deploy on one side and running containers and logs on the other." />
           </figure>
+        </div>
+      </section>
+
+      <!-- What the guard catches, going by. -->
+      <section class="ticker" aria-label="Commands Clavra holds back on production">
+        <div class="ticker__track" data-ticker>
+          <ul class="ticker__list">
+            <li><code>rm -rf /srv/app/releases</code><span>held</span></li>
+            <li><code>DROP TABLE users;</code><span>held</span></li>
+            <li><code>psql -c 'DELETE FROM orders;'</code><span>held</span></li>
+            <li><code>docker compose down</code><span>held</span></li>
+            <li><code>git push --force origin main</code><span>held</span></li>
+            <li><code>kubectl delete ns payments</code><span>held</span></li>
+            <li><code>terraform destroy</code><span>held</span></li>
+            <li><code>find /var/log -delete</code><span>held</span></li>
+            <li><code>chmod -R 777 /</code><span>held</span></li>
+            <li><code>shutdown -h now</code><span>held</span></li>
+            <li><code>redis-cli FLUSHALL</code><span>held</span></li>
+            <li><code>UPDATE users SET admin=1;</code><span>held</span></li>
+          </ul>
         </div>
       </section>
 
@@ -202,20 +230,23 @@
         <div class="wrap">
           <h2 id="places-title">Not every server deserves the same terminal.</h2>
           <p class="section__lede">
-            Put each host where it belongs. Clavra takes it from there: calm where it can be,
-            careful where it has to be.
+            Give each host a label: Personal, Staging, Production, or one of your own. Clavra takes
+            it from there: calm where it can be, careful where it has to be.
           </p>
           <ul class="places__list">
             <li class="places__item">
-              <h3><span class="dot dot--personal" aria-hidden="true"></span>Personal</h3>
+              <h3 class="label label--personal">Personal</h3>
+              <div class="mini" data-mini="personal" aria-hidden="true"><p class="mini__line"></p></div>
               <p>Your VPS, the Pi in the cupboard. Nothing in your way: just the terminal, fast.</p>
             </li>
             <li class="places__item">
-              <h3><span class="dot dot--staging" aria-hidden="true"></span>Staging</h3>
+              <h3 class="label label--staging">Staging</h3>
+              <div class="mini" data-mini="staging" aria-hidden="true"><p class="mini__line"></p></div>
               <p>Where you try things. Clavra remembers what you ran and offers it back as you type.</p>
             </li>
             <li class="places__item">
-              <h3><span class="dot dot--production" aria-hidden="true"></span>Production</h3>
+              <h3 class="label label--production">Production</h3>
+              <div class="mini mini--production" data-mini="production" aria-hidden="true"><p class="mini__line"></p></div>
               <p>A coral mark on every pane, and a yes before anything you can't undo. Nothing it remembers is kept on disk.</p>
             </li>
           </ul>
@@ -234,7 +265,7 @@
                 snippets and every split pane are checked too.
               </p>
             </div>
-            <figure class="window"><img src="/img/guard.jpg" width="1600" height="978" loading="lazy" decoding="async"
+            <figure class="window" data-wipe><img src="/img/guard.jpg" width="1600" height="978" loading="lazy" decoding="async"
               alt="docker compose down typed on api-prod, held back with the question: Run this on api-prod? Takes containers down. Nothing has been sent yet." /></figure>
           </article>
 
@@ -248,7 +279,7 @@
                 on its own with its tunnels.
               </p>
             </div>
-            <figure class="window"><img src="/img/suggest.jpg" width="1600" height="978" loading="lazy" decoding="async"
+            <figure class="window" data-wipe><img src="/img/suggest.jpg" width="1600" height="978" loading="lazy" decoding="async"
               alt="A staging tab split top and bottom; in the top pane the rest of a command run earlier is suggested in grey after the cursor." /></figure>
           </article>
 
@@ -262,7 +293,7 @@
                 dropped connection never leaves half a file.
               </p>
             </div>
-            <figure class="window"><img src="/img/files.jpg" width="1600" height="978" loading="lazy" decoding="async"
+            <figure class="window" data-wipe><img src="/img/files.jpg" width="1600" height="978" loading="lazy" decoding="async"
               alt="A Files panel next to the terminal listing the app folder on the server: logs, migrations, public, src and a few files with sizes." /></figure>
           </article>
 
@@ -275,7 +306,7 @@
                 every connect, and jump hosts for servers behind a bastion.
               </p>
             </div>
-            <figure class="window"><img src="/img/ports.jpg" width="1600" height="978" loading="lazy" decoding="async"
+            <figure class="window" data-wipe><img src="/img/ports.jpg" width="1600" height="978" loading="lazy" decoding="async"
               alt="The Ports panel on db-prod: localhost 15432 forwarded to the server's 5432, a SOCKS proxy on 1080, and listening ports with Forward buttons." /></figure>
           </article>
         </div>
@@ -283,7 +314,8 @@
 
       <section id="phone" class="phone" aria-labelledby="phone-title">
         <div class="wrap phone__grid">
-          <figure class="phone__shot">
+          <figure class="phone__shot" data-phone>
+            <span class="phone__scan" aria-hidden="true"></span>
             <img src="/img/phone.jpg" width="780" height="1688" loading="lazy" decoding="async"
               alt="A Clavra tab open in a phone browser: a staging terminal after a deploy, with Esc, Tab, Ctrl and arrow keys above a field to type in." />
           </figure>
@@ -295,7 +327,7 @@
               phone's browser, with Esc, Tab, Ctrl and the arrows a tap away. There's nothing to
               install.
             </p>
-            <ol class="steps">
+            <ol class="steps" data-steps>
               <li>On the Mac: Clavra, Phone Access, Turn On.</li>
               <li>On the phone: point the camera at the code.</li>
               <li>On the Mac again: Allow. Then type.</li>
@@ -322,7 +354,7 @@
             <div><dt>Host keys, verified</dt><dd>The first connection shows the fingerprint to trust. A changed key gets a red warning, checked against your <code>~/.ssh/known_hosts</code> too.</dd></div>
             <div><dt>Server health</dt><dd>How fast each host answers, in the sidebar. While connected: load, memory, disk and uptime, and anything running hot turns coral.</dd></div>
             <div><dt>Snippets</dt><dd>The commands you keep reaching for, typed into any tab with ⌘;. Risky ones still ask on production.</dd></div>
-            <div><dt>Your ~/.ssh/config</dt><dd>Imported in one click, with users, ports and keys. Type <code>user@server</code> in Where to? for anything else.</dd></div>
+            <div><dt>Your ~/.ssh/config</dt><dd>See every host before it's imported, with <code>Host *</code> defaults, <code>Include</code> and jump hosts followed. Keys are matched to hosts for you.</dd></div>
             <div><dt>Secrets in the Keychain</dt><dd>Passwords and passphrases never touch a file. No account, no analytics, no telemetry.</dd></div>
             <div><dt>Updates in place</dt><dd>Once a day Clavra asks GitHub for a newer version, checks it's signed by us, and restarts into it. You can turn the check off.</dd></div>
             <div><dt>On every Mac you use</dt><dd>Keep hosts and snippets in your own iCloud Drive if you like. Each Mac keeps its own passwords.</dd></div>
@@ -351,7 +383,7 @@
           </details>
           <details>
             <summary>Does Clavra work with my ~/.ssh/config?</summary>
-            <p>Yes. Import the hosts from <code>~/.ssh/config</code> in one click, including their user, port and key. Host keys already in <code>~/.ssh/known_hosts</code> are trusted.</p>
+            <p>Yes. Clavra shows every host in <code>~/.ssh/config</code> before importing it, with its user, port, key and jump host, following <code>Host *</code> defaults and <code>Include</code>. Entries that only pick a key for git are left out. Keys are matched to hosts automatically, and host keys already in <code>~/.ssh/known_hosts</code> are trusted.</p>
           </details>
           <details>
             <summary>Why does macOS ask me to confirm the first launch?</summary>
@@ -366,7 +398,7 @@
 
       <section class="end">
         <div class="wrap end__row">
-          <img src="/img/icon-512.png" width="96" height="96" alt="" loading="lazy" />
+          <img class="end__icon" src="/img/icon-512.png" width="96" height="96" alt="" loading="lazy" />
           <div>
             <h2>Bring your servers.</h2>
             <p>Download Clavra, import your <code>~/.ssh/config</code>, and mark the ones that matter.</p>
