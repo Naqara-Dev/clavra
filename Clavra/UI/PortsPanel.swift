@@ -53,6 +53,10 @@ struct PortsPanel: View {
                     ForwardFields(kind: kind, local: $local, remote: $remote)
                     Button(kind == .socks ? "Start Proxy" : "Forward") { addManual() }
                         .buttonStyle(QuietButtonStyle()).disabled(Server.Forward.parse(kind: kind, local: local, remote: remote) == nil)
+                    if let problem = ForwardFields.problem(kind: kind, local: local, remote: remote) {
+                        Text(problem.text).font(.system(size: 11)).foregroundStyle(problem.isWarning ? Theme.brass : Theme.color(for: .production))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(ForwardFields.note(kind))
                         .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -144,6 +148,8 @@ private struct ForwardRow: View {
             }
             if case .failed(let message) = item.status {
                 Text(message).font(.system(size: 11.5)).foregroundStyle(Theme.color(for: .production))
+            } else if let note = item.note {
+                Text(note).font(.system(size: 11.5)).foregroundStyle(Theme.brass).fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 10)
@@ -181,6 +187,14 @@ struct ForwardFields: View {
                 SoftField("Mac port, e.g. 1080", text: $local, mono: true)
             }
         }
+    }
+
+    /// A mistake in the form (refused), or a Mac port that's busy right now (allowed, flagged).
+    static func problem(kind: Server.Forward.Kind, local: String, remote: String) -> (text: String, isWarning: Bool)? {
+        if let text = Server.Forward.problem(kind: kind, local: local, remote: remote) { return (text, false) }
+        guard let forward = Server.Forward.parse(kind: kind, local: local, remote: remote), forward.kind != .remote,
+              forward.localPort >= 1024, !LocalListener.isFree(forward.localPort) else { return nil }
+        return ("This Mac: port \(forward.localPort) is in use by another app right now.", true)
     }
 
     static func note(_ kind: Server.Forward.Kind) -> String {

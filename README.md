@@ -43,12 +43,12 @@ Most SSH clients treat every server the same. Clavra knows the one that pays you
 | **Split panes** | ⌘D beside, ⇧⌘D below, ⌥⌘ arrows to move, dividers you can drag, the way you know from iTerm. Type into every pane in a tab at once with ⌥⌘I. |
 | **Suggestions** | Commands you ran on that host appear in grey after the cursor; → takes them. Anything that looks like it holds a password is never kept, and production keeps nothing on disk. |
 | **Files** | SFTP beside the terminal: whole folders both ways, drag and drop, permissions, and editing in any Mac app with each save going back up. Uploads land under a temporary name first, so a dropped connection never leaves half a file. |
-| **Tunnels** | Local, remote and SOCKS (`ssh -L`, `-R`, `-D`). The ports the server listens on are offered one click away; tunnels saved with a host open on every connect. |
+| **Tunnels** | Local, remote and SOCKS (`ssh -L`, `-R`, `-D`). The ports the server listens on are offered one click away; tunnels saved with a host open on every connect. A Mac port that's already taken, or a server that can't reach the target, is named on the side it happens. |
 | **Server health** | How fast each host answers, in the sidebar. While connected: load, memory, disk and uptime, turning coral when something runs hot. |
 | **Phone Access** | Scan a QR code and your tabs open in the phone's browser, end-to-end encrypted. Production tabs are view only from a phone unless you allow typing. |
-| **Sign-in** | Ed25519, RSA and ECDSA keys (passphrases supported) or passwords, jump hosts, and host keys checked against `~/.ssh/known_hosts`. Save a user and key once as an identity and share it across hosts. Import `~/.ssh/config` in one click. |
-| **Hosts** | Home lists every host by place with Connect, Test Connection and Edit on each. Tags, and a sidebar you can group by place or tag and fold shut. |
-| **Keys** | Every key in `~/.ssh` with its type, age and the hosts that use it. Weak or world-readable keys are called out; a new Ed25519 key is one click. |
+| **Sign-in** | Ed25519, RSA and ECDSA keys (passphrases supported) or passwords, jump hosts, and host keys checked against `~/.ssh/known_hosts` (keys marked `@revoked` are refused). On Automatic, Clavra picks the key `~/.ssh/config` names for the host, then your usual ones. Save a user and key once as an identity and share it across hosts. |
+| **Hosts** | Home lists every host by label with Connect, Test Connection and Edit on each. Personal, Staging, Production or labels of your own, tags, and a sidebar you can group and fold shut. Importing `~/.ssh/config` shows each host first, with `Host *` defaults, `Include` and `ProxyJump` followed, and git-only entries left out. |
+| **Keys** | Every key in `~/.ssh` with its type, age and the hosts that use it. Weak or world-readable keys are called out; a new Ed25519 key is one click, and it only lands in `~/.ssh` once its passphrase is on. |
 | **And** | Find in scrollback, snippets (⌘;), reconnecting on its own, `ssh://` links, a menu bar host list, tabs restored on launch, iCloud Drive sync and in-place updates. |
 
 <p align="center">

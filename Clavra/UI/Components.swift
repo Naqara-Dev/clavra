@@ -36,15 +36,23 @@ struct SoftField<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             if let prefix {
-                Text(prefix).font(.system(size: 12.5)).foregroundStyle(Theme.tertiary).frame(width: 74, alignment: .leading)
+                Text(prefix).font(.system(size: 12.5)).foregroundStyle(Theme.secondary).frame(width: 74, alignment: .leading)
+                // A hairline between what the field is and what's in it, so the two never read as one.
+                Rectangle().fill(Theme.line).frame(width: 1, height: 18)
             }
             Group {
-                if secure { SecureField(title, text: $text) } else { TextField(title, text: $text) }
+                if secure { SecureField("", text: $text) } else { TextField("", text: $text) }
             }
             .textFieldStyle(.plain)
             .font(.system(size: 13, design: mono ? .monospaced : .default))
+            // The hint is drawn by hand, a clear step quieter than anything typed.
+            .overlay(alignment: .leading) {
+                if text.isEmpty {
+                    Text(title).font(.system(size: 13)).foregroundStyle(Theme.tertiary).lineLimit(1).allowsHitTesting(false)
+                }
+            }
             trailing
         }
         .padding(.horizontal, 12)
@@ -54,9 +62,64 @@ struct SoftField<Trailing: View>: View {
     }
 }
 
+/// A form field with its name above it, and an optional note below.
+struct FormField<Content: View>: View {
+    var label: String
+    var note: String?
+    @ViewBuilder var content: Content
+
+    init(_ label: String, note: String? = nil, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.note = note
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
+            content
+            if let note {
+                Text(note).font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Lays chips out in rows, wrapping when the next one doesn't fit.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, row: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width { x = 0; y += row + spacing; row = 0 }
+            x += size.width + spacing
+            row = max(row, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + row)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, row: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += row + spacing; row = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            row = max(row, size.height)
+        }
+    }
+}
+
 struct BrassButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .lineLimit(1)
+            .fixedSize()
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(Theme.onBrass)
             .padding(.horizontal, 14)
@@ -72,6 +135,8 @@ struct QuietButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .lineLimit(1)
+            .fixedSize()
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(tint)
             .padding(.horizontal, 14)
@@ -119,19 +184,5 @@ struct HoverCard<Content: View>: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: hovering)
-    }
-}
-
-struct PlaceChip: View {
-    var place: Server.Place
-
-    var body: some View {
-        let tint = Theme.color(for: place)
-        Text(place.label.lowercased())
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tint.opacity(0.12)))
     }
 }

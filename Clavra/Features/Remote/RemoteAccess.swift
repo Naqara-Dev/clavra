@@ -483,12 +483,13 @@ final class RemoteAccess {
         link.signature = signature()
         let list: [[String: Any]] = model.sessions.map { session in
             ["id": session.id.uuidString, "title": session.title, "host": session.server.target,
-             "place": session.server.place.rawValue, "live": session.isLive, "typing": canType(in: session),
+             "place": LabelStore.shared.resolve(session.server.place).rawValue, "placeName": session.server.place.label, "live": session.isLive, "typing": canType(in: session),
              "held": session.held?.command ?? ""]
         }
         let hosts: [[String: Any]] = model.store.hosts
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-            .map { ["id": $0.id.uuidString, "title": $0.title, "host": model.resolved($0).target, "place": $0.place.rawValue] }
+            .map { ["id": $0.id.uuidString, "title": $0.title, "host": model.resolved($0).target, "place": LabelStore.shared.resolve($0.place).rawValue,
+                    "placeName": $0.place.label] }
         link.send(["t": "sessions", "list": list, "hosts": hosts, "selected": current?.id.uuidString ?? ""], key: key)
     }
 

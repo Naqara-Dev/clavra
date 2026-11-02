@@ -66,8 +66,8 @@ struct KeysView: View {
         model.store.hosts.map(model.resolved).filter { host in
             guard host.auth == .key else { return false }
             if let path = host.keyPath { return Credentials.expand(path) == Credentials.expand(key.path) }
-            let fallback = Credentials.defaultKeys.first { FileManager.default.fileExists(atPath: Credentials.expand($0)) }
-            return fallback.map(Credentials.expand) == Credentials.expand(key.path)
+            // On Automatic, the key it reaches for first.
+            return Credentials.automaticKeys(for: host).first.map(Credentials.expand) == Credentials.expand(key.path)
         }
     }
 

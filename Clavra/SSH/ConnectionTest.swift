@@ -26,7 +26,18 @@ enum ConnectionTest {
         let started = ContinuousClock.now
         let seen = Seen()
         do {
-            nonisolated(unsafe) let method = try Credentials.method(for: server, password: password, passphrase: passphrase)
+            // With the key on Automatic, remember which one the server took, to say so.
+            var attempts: KeyAttempts?
+            let chosen: SSHAuthenticationMethod
+            if server.auth == .key, server.keyPath == nil {
+                let saved = passphrase.flatMap { $0.isEmpty ? nil : $0 } ?? Keychain.passphrase(for: server.secretsID)
+                let automatic = try Credentials.automatic(for: server, passphrase: saved.map { Data($0.utf8) })
+                chosen = automatic.method
+                attempts = automatic.tried
+            } else {
+                chosen = try Credentials.method(for: server, password: password, passphrase: passphrase)
+            }
+            nonisolated(unsafe) let method = chosen
             // Only a known key is accepted here; anything else stops the test and says why.
             func check(_ host: Server) -> HostKeyCheck {
                 HostKeyCheck { key in
@@ -66,11 +77,13 @@ enum ConnectionTest {
             let ms = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
             let system = lines.first ?? "the server"
             let user = lines.count > 1 ? lines[1] : server.user
-            return .ok("Signed in as \(user) on \(system) in \(ms) ms.")
+            let with = attempts?.lastTried.map { " with \($0)" } ?? ""
+            return .ok("Signed in as \(user)\(with) on \(system) in \(ms) ms.")
         } catch {
             switch seen.verdict {
             case .unknown: return .newKey(fingerprint: seen.fingerprint, key: seen.key, host: seen.host, port: seen.port)
             case .changed: return .changedKey(seen.fingerprint)
+            case .revoked: return .failed(ClavraError.revokedHostKey.localizedDescription)
             case .trusted: return .failed(Session.describe(error))
             }
         }

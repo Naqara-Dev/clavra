@@ -33,6 +33,8 @@ final class AppModel {
     var page: Page = .home
     /// The host being edited in the sheet; a fresh one when adding.
     var editing: Server?
+    /// The ~/.ssh/config import preview is showing.
+    var importing = false
     /// Bumped to put the cursor in the "Where to?" field.
     var focusQuick = 0
     /// The snippet palette over the front terminal.

@@ -583,6 +583,7 @@ final class Session: Identifiable {
         }
         if raw.contains("connectTimeout") || raw.contains("timeout") { return "The server didn't answer. Check the address and your network." }
         if raw.contains("connectionRefused") || raw.contains("Connection refused") { return "The server refused the connection. Is SSH running on that port?" }
+        if raw.contains("revokedHostKey") { return ClavraError.revokedHostKey.errorDescription! }
         if raw.contains("hostKeyRejected") { return ClavraError.hostKeyRejected.errorDescription! }
         if raw.contains("NXDOMAIN") || raw.contains("unknownHost") || raw.contains("resolve") { return "Couldn't find that address." }
         return error.localizedDescription

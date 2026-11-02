@@ -18,6 +18,8 @@ final class ForwardList {
     struct Item: Identifiable, Equatable {
         var forward: Server.Forward
         var status: Status
+        /// The tunnel is open, but the server couldn't reach where the last connection was going.
+        var note: String?
         var id: Server.Forward.ID { forward.id }
     }
 
@@ -35,8 +37,21 @@ final class ForwardList {
         if forward.kind == .remote { return openRemote(forward, through: client) }
         Task {
             do {
+                // The listener binds with SO_REUSEADDR, which on macOS can sit quietly beside an app
+                // already on *:port. Check first, so the user hears about it instead of a dead tunnel.
+                if forward.localPort >= 1024, !LocalListener.isFree(forward.localPort) {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    if !LocalListener.isFree(forward.localPort) {
+                        return set(forward.id, .failed("This Mac: port \(forward.localPort) is already used by another app. Pick another Mac port."))
+                    }
+                }
+                let id = forward.id, target = "\(forward.host):\(forward.port)"
                 let listener = try await LocalListener.start(port: forward.localPort, host: forward.host,
-                                                             remotePort: forward.port, socks: forward.kind == .socks, client: client)
+                                                             remotePort: forward.port, socks: forward.kind == .socks, client: client) { [weak self] in
+                    Task { @MainActor in self?.note(id, "Server: couldn't reach \(target) from there. Is something listening on it?") }
+                } reached: { [weak self] in
+                    Task { @MainActor in self?.note(id, nil) }
+                }
                 guard items.contains(where: { $0.id == forward.id }) else { return listener.close() }
                 listeners[forward.id] = listener
                 set(forward.id, .open)
@@ -58,8 +73,8 @@ final class ForwardList {
             } catch {
                 let raw = String(describing: error)
                 self?.set(id, .failed(raw.contains("globalRequest") || raw.contains("rejected") || raw.contains("Failure")
-                    ? "The server said no. It may not allow forwarding, or port \(forward.port) is taken there."
-                    : "Couldn't open port \(forward.port) on the server."))
+                    ? "Server: it said no. It may not allow forwarding (AllowTcpForwarding), or port \(forward.port) is taken there."
+                    : "Server: couldn't open port \(forward.port) there."))
             }
         }
     }
@@ -107,15 +122,19 @@ final class ForwardList {
         return wanted
     }
 
+    private func note(_ id: Server.Forward.ID, _ text: String?) {
+        if let index = items.firstIndex(where: { $0.id == id }), items[index].note != text { items[index].note = text }
+    }
+
     private func set(_ id: Server.Forward.ID, _ status: Status) {
         if let index = items.firstIndex(where: { $0.id == id }) { items[index].status = status }
     }
 
     private static func describe(_ error: Error, port: Int) -> String {
         let raw = String(describing: error)
-        if raw.contains("Address already in use") || raw.contains("EADDRINUSE") { return "Port \(port) is taken on this Mac." }
-        if raw.contains("Permission denied") || raw.contains("EACCES") { return "Ports below 1024 need admin rights." }
-        return "Couldn't open port \(port)."
+        if raw.contains("Address already in use") || raw.contains("EADDRINUSE") { return "This Mac: port \(port) is already used by another app." }
+        if raw.contains("Permission denied") || raw.contains("EACCES") { return "This Mac: ports below 1024 need admin rights." }
+        return "This Mac: couldn't open port \(port)."
     }
 }
 
@@ -125,7 +144,10 @@ final class LocalListener: Sendable {
 
     private init(channel: Channel) { self.channel = channel }
 
-    static func start(port: Int, host: String, remotePort: Int, socks: Bool = false, client: ClientBox) async throws -> LocalListener {
+    /// `unreachable` is called when the server can't open the way to `host:remotePort` for a
+    /// connection, `reached` when it can again.
+    static func start(port: Int, host: String, remotePort: Int, socks: Bool = false, client: ClientBox,
+                      unreachable: @escaping @Sendable () -> Void = {}, reached: @escaping @Sendable () -> Void = {}) async throws -> LocalListener {
         let bootstrap = ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             // Nothing is read until the tunnel's other end is ready, so no bytes fall on the floor.
@@ -133,7 +155,7 @@ final class LocalListener: Sendable {
             .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .childChannelInitializer { local in
                 socks ? local.pipeline.addHandler(SOCKSOpener(client: client))
-                      : local.pipeline.addHandler(Opener(client: client, host: host, port: remotePort))
+                      : local.pipeline.addHandler(Opener(client: client, host: host, port: remotePort, unreachable: unreachable, reached: reached))
             }
         let channel = try await bootstrap.bind(host: "127.0.0.1", port: port).get()
         return LocalListener(channel: channel)
@@ -166,24 +188,36 @@ private final class Opener: ChannelInboundHandler, RemovableChannelHandler, @unc
     private let client: ClientBox
     private let host: String
     private let port: Int
+    private let unreachable: @Sendable () -> Void
+    private let reached: @Sendable () -> Void
 
-    init(client: ClientBox, host: String, port: Int) {
+    init(client: ClientBox, host: String, port: Int, unreachable: @escaping @Sendable () -> Void, reached: @escaping @Sendable () -> Void) {
         self.client = client
         self.host = host
         self.port = port
+        self.unreachable = unreachable
+        self.reached = reached
     }
 
     func channelActive(context: ChannelHandlerContext) {
         let local = context.channel
         let origin = local.remoteAddress ?? (try? SocketAddress(ipAddress: "127.0.0.1", port: 0))!
-        let (client, host, port) = (client, host, port)
+        let (client, host, port, unreachable, reached) = (client, host, port, unreachable, reached)
         Task {
+            let remote: Channel
             do {
-                let remote = try await client.client.createDirectTCPIPChannel(
+                remote = try await client.client.createDirectTCPIPChannel(
                     using: SSHChannelType.DirectTCPIP(targetHost: host, targetPort: port, originatorAddress: origin)
                 ) { remote in
                     remote.pipeline.addHandler(Relay(peer: local))
                 }
+                reached()
+            } catch {
+                unreachable()
+                try? await local.close()
+                return
+            }
+            do {
                 try await local.pipeline.addHandler(Relay(peer: remote)).get()
                 try await local.pipeline.removeHandler(self).get()
                 try await local.setOption(ChannelOptions.autoRead, value: true).get()

@@ -9,10 +9,14 @@ enum CommandGuard {
     }
 
     private static let rules: [(pattern: String, reason: String)] = [
-        (#"\brm\s+(-\w+\s+)*-\w*[rRf]"#, "Deletes files without asking"),
+        // Any recursive or forced option, short or long, wherever it sits in the rm command.
+        (#"\brm\s+([^;&|]*\s)?(-[a-zA-Z]*[rRf][a-zA-Z]*|--recursive|--force)(?=\s|$|[;&|])"#, "Deletes files without asking"),
+        (#"\bfind\b[^;&|]*\s-delete\b"#, "Deletes every file it finds"),
+        (#"\bfind\b[^;&|]*\s-exec(dir)?\s+(sudo\s+)?rm\b"#, "Deletes every file it finds"),
         (#"\b(drop)\s+(database|schema|table)\b"#, "Drops data from the database"),
         (#"\btruncate\s+(table\s+)?[\w\.\"`]+"#, "Empties a table or file"),
-        (#"\bdelete\s+from\s+[\w\.\"`]+\s*;?\s*$"#, "Deletes every row: there's no WHERE"),
+        // Also inside quotes, as in psql -c 'DELETE FROM users;' or mysql -e "...".
+        (#"\bdelete\s+from\s+[\w\.\"`]+\s*(;|'|\"|$)"#, "Deletes every row: there's no WHERE"),
         (#"\bupdate\s+[\w\.\"`]+\s+set\s+((?!\bwhere\b).)*$"#, "Changes every row: there's no WHERE"),
         // Only as a command, so `grep reboot-required` or `less /var/log/shutdown.log` pass.
         (#"(^|[;&|(]|\bsudo|\bthen|\bdo|\bexec)\s*(shutdown|reboot|poweroff|halt)(?![-.\w/])"#, "Turns the server off or restarts it"),
@@ -31,7 +35,7 @@ enum CommandGuard {
         (#"\bterraform\s+(destroy|apply)\b"#, "Changes real infrastructure"),
         (#"\bgit\s+push\b.*(\s--force\b|\s-f\b|\s--force-with-lease\b)"#, "Rewrites history on the remote"),
         (#"\bgit\s+(reset\s+--hard|clean\s+-\w*f)"#, "Throws away uncommitted work"),
-        (#"\bch(mod|own)\s+(-\w*R\w*)\b"#, "Changes permissions on a whole tree"),
+        (#"\bch(mod|own|grp)\s+([^;&|]*\s)?(-[a-zA-Z]*R[a-zA-Z]*|--recursive)\b"#, "Changes permissions on a whole tree"),
         (#"\b(iptables|ip6tables)\s+(-F|--flush)\b"#, "Clears the firewall"),
         (#"\bufw\s+(disable|reset)\b"#, "Turns the firewall off"),
         (#"\b(apt|apt-get|yum|dnf)\s+(remove|purge|autoremove)\b"#, "Uninstalls packages"),

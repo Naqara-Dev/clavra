@@ -14,7 +14,7 @@ struct Identity: Identifiable, Codable, Hashable, Sendable {
 
     /// `deploy · ~/.ssh/work` or `root · password`.
     var summary: String {
-        auth == .password ? "\(user) · password" : "\(user) · \(keyPath ?? "default key")"
+        auth == .password ? "\(user) · password" : "\(user) · \(keyPath ?? "automatic key")"
     }
 }
 

@@ -21,11 +21,26 @@ enum Theme {
 
     static let terminal = SwiftUI.Color(nsColor: NSColor(hex: 0x121114))
 
+    @MainActor
     static func color(for place: Server.Place) -> SwiftUI.Color {
-        switch place {
-        case .personal: tone(dark: 0x93C7A6, light: 0x4F9467)
-        case .staging: tone(dark: 0x8FB3DC, light: 0x4F7FB5)
-        case .production: tone(dark: 0xE2857A, light: 0xC4594C)
+        let labels = LabelStore.shared
+        switch labels.resolve(place) {
+        case .production: return color(for: .coral)
+        case .staging: return color(for: .mist)
+        case .personal: return color(for: .sage)
+        default: return color(for: labels.label(for: place)?.tint ?? .sage)
+        }
+    }
+
+    static func color(for tint: HostLabel.Tint) -> SwiftUI.Color {
+        switch tint {
+        case .sage: tone(dark: 0x93C7A6, light: 0x4F9467)
+        case .mist: tone(dark: 0x8FB3DC, light: 0x4F7FB5)
+        case .coral: tone(dark: 0xE2857A, light: 0xC4594C)
+        case .brass: tone(dark: 0xD8B46C, light: 0xA5802F)
+        case .lilac: tone(dark: 0xC7A0D8, light: 0x8A5FA0)
+        case .teal: tone(dark: 0x8CCBC7, light: 0x3F8A85)
+        case .stone: tone(dark: 0xA29E97, light: 0x7A756D)
         }
     }
 

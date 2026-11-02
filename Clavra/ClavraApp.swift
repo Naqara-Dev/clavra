@@ -129,6 +129,7 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: model.remote.waiting)
+        .sheet(isPresented: $model.importing) { ImportSheet(model: model) }
         .sheet(item: $model.editing) { server in
             HostEditor(server: server, isNew: !model.isSaved(server), others: model.store.hosts, model: model,
                        save: { saved, connect in
@@ -139,7 +140,7 @@ struct RootView: View {
         }
         .onAppear {
             debugLaunch()
-            if model.sessions.isEmpty { model.restoreTabs() }
+            if model.sessions.isEmpty, !UserDefaults.standard.bool(forKey: "ClavraNoRestore") { model.restoreTabs() }
             if UserDefaults.standard.bool(forKey: "ClavraRemote") { model.remote.start() }
         }
     }
@@ -150,6 +151,11 @@ struct RootView: View {
     private func debugLaunch() {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "ClavraNewHost") { model.newHost() }
+        // `-ClavraEditHost name` opens a saved host in the editor; `-ClavraNoRestore YES` skips last time's tabs.
+        if UserDefaults.standard.bool(forKey: "ClavraImport") { model.importing = true }
+        if let name = UserDefaults.standard.string(forKey: "ClavraEditHost") {
+            model.editing = model.store.hosts.first { $0.title == name }
+        }
         // `-ClavraSettings about` opens Settings on that tab.
         if let tab = UserDefaults.standard.string(forKey: "ClavraSettings") {
             UserDefaults.standard.set(tab, forKey: "SettingsTab")
@@ -200,7 +206,7 @@ struct RootView: View {
     private func debugOpen(_ quick: Server) {
         var server = quick
         server.keyPath = UserDefaults.standard.string(forKey: "ClavraKey")
-        if let place = UserDefaults.standard.string(forKey: "ClavraPlace").flatMap(Server.Place.init(rawValue:)) { server.place = place }
+        if let place = UserDefaults.standard.string(forKey: "ClavraPlace").map(Server.Place.init(rawValue:)) { server.place = place }
         // `-ClavraForward 18080:8080` (or `socks:1080`, or `remote:9000:3000` for server 9000 → Mac 3000)
         // adds tunnels, comma-separated; `-ClavraJump user@host:port` hops through another host.
         if let spec = UserDefaults.standard.string(forKey: "ClavraForward") {

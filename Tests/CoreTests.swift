@@ -23,6 +23,7 @@ enum CoreTests {
         panes()
         servers()
         sshConfig()
+        places()
         knownHosts()
         print(failures == 0 ? "✓ \(passes) checks passed" : "\(failures) of \(passes + failures) checks failed")
         exit(failures == 0 ? 0 : 1)
@@ -35,11 +36,17 @@ enum CoreTests {
                      "docker compose down", "git push --force origin main", "git push -f", "git reset --hard HEAD~3",
                      "chmod -R 777 /", "kubectl delete pod x", "terraform destroy", "systemctl restart nginx",
                      "kill -9 1234", "mkfs.ext4 /dev/sdb", "dd if=x of=/dev/sda", "crontab -r", "redis-cli FLUSHALL",
-                     "apt remove nginx", "ufw disable", "iptables -F"]
+                     "apt remove nginx", "ufw disable", "iptables -F",
+                     "psql -c 'DELETE FROM users;'", "mysql -e \"delete from orders\"", "rm --recursive old",
+                     "rm --force x", "rm -i --recursive x", "sudo rm -v -r /srv/a", "find /var/www -name '*.log' -delete",
+                     "find . -type f -exec rm {} \\;", "chown --recursive www /srv", "chmod -v -R 755 /srv",
+                     "psql -c \"update users set admin=true\""]
         let safe = ["ls -la", "rm file.txt", "git push origin main", "DELETE FROM users WHERE id=3;",
                     "update users set a=1 where id=2", "docker ps", "systemctl status nginx",
                     "cat /var/log/syslog | grep reboot-required", "grep reboot /var/log/syslog", "less shutdown.log",
-                    "echo hello", "kill 1234", "chmod 600 key", "# rm -rf /", "git status", "psql -c 'select 1'"]
+                    "echo hello", "kill 1234", "chmod 600 key", "# rm -rf /", "git status", "psql -c 'select 1'",
+                    "rm -i file.txt", "rm file-rf.txt", "find . -name '*.log'", "psql -c 'DELETE FROM users WHERE id=1;'",
+                    "rm -v old.log", "ls -R /srv"]
         for command in risky { check(CommandGuard.check(command) != nil, "risky: \(command)") }
         for command in safe { check(CommandGuard.check(command) == nil, "safe: \(command)") }
     }
@@ -110,6 +117,16 @@ enum CoreTests {
         let remote = Server.Forward.parse(kind: .remote, local: "3000", remote: "9000")
         check(remote?.port == 9000 && remote?.localPort == 3000, "remote")
         check(Server.Forward.parse(kind: .socks, local: "1080", remote: "")?.localPort == 1080, "socks")
+        // Nothing is guessed: a Mac port that isn't a port stops the tunnel instead of borrowing the server's.
+        check(Server.Forward.parse(kind: .local, local: "abc", remote: "5432") == nil, "a non-number Mac port is refused")
+        check(Server.Forward.parse(kind: .local, local: "70000", remote: "5432") == nil, "a Mac port above 65535 is refused")
+        check(Server.Forward.parse(kind: .local, local: "0", remote: "5432") == nil, "port 0 is refused")
+        check(Server.Forward.parse(kind: .remote, local: "3000", remote: "70000") == nil, "a server port above 65535 is refused")
+        check(Server.Forward.parse(kind: .local, local: "", remote: "db:99999") == nil, "host:port out of range is refused")
+        check(Server.Forward.parse(kind: .socks, local: "-1", remote: "") == nil, "a negative port is refused")
+        check(Server.Forward.problem(kind: .local, local: "abc", remote: "5432")?.hasPrefix("Mac side") == true, "the problem names the Mac side")
+        check(Server.Forward.problem(kind: .remote, local: "3000", remote: "x")?.hasPrefix("Server side") == true, "the problem names the server side")
+        check(Server.Forward.problem(kind: .local, local: "", remote: "") == nil, "an empty form has no problem yet")
         check(Server.Forward.parse(kind: .local, local: "", remote: "99999") == nil, "port out of range")
         check(Server.Forward.parse(kind: .remote, local: "", remote: "9000") == nil, "remote needs a Mac port")
     }
@@ -154,6 +171,89 @@ enum CoreTests {
         check(hosts.count == 2, "wildcards are skipped")
         check(hosts.first?.address == "10.0.0.5" && hosts.first?.user == "deploy" && hosts.first?.port == 2200
               && hosts.first?.keyPath == "~/.ssh/web", "fields")
+
+        // ssh's rules: the first value wins, Host * fills in what's missing, every alias is a host.
+        let resolved = HostStore.sshConfigHosts("""
+        Host web api
+          HostName %h.example.com
+        Host bastion
+          HostName 10.0.0.1
+          User jump
+        Host api
+          Port 2222
+          ProxyJump bastion
+        Host *
+          User deploy
+          Port 2200
+          IdentityFile ~/.ssh/team
+        """)
+        let byName = Dictionary(uniqueKeysWithValues: resolved.map { ($0.server.name, $0) })
+        check(resolved.map(\.server.name) == ["web", "api", "bastion"], "every alias of a Host line is a host")
+        check(byName["web"]?.server.address == "web.example.com" && byName["web"]?.server.user == "deploy"
+              && byName["web"]?.server.port == 2200, "Host * defaults and %h apply")
+        check(byName["api"]?.server.port == 2222 && byName["api"]?.jump == "bastion", "an earlier value beats Host *")
+        check(byName["bastion"]?.server.user == "jump" && byName["bastion"]?.server.keyPath == "~/.ssh/team", "IdentityFile from Host *")
+
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "clavra-config-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder.appending(path: "config.d"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try? "Host db\n  HostName 10.0.0.7\n".write(to: folder.appending(path: "config.d/work"), atomically: true, encoding: .utf8)
+        let included = HostStore.sshConfigHosts("Include config.d/*\nHost web\n  HostName 10.0.0.5\n", base: folder)
+        check(included.map(\.server.name) == ["db", "web"] && included.first?.server.address == "10.0.0.7", "Include is followed")
+
+        // Blocks that only pick a key for git aren't servers to open.
+        let git = HostStore.parseSSHConfig("""
+        Host github-work
+          HostName github.com
+          IdentityFile ~/.ssh/work
+        Host gitlab.example.id
+          User git
+        Host box
+          HostName 10.0.0.9
+        """)
+        check(git.map(\.isGitRemote) == [true, true, false], "git remotes are recognised")
+
+        // Automatic finds the key a block names, by alias, by pattern, or by the HostName it points to.
+        let keys = """
+        Host github-work
+          HostName github.com
+          IdentityFile ~/.ssh/work
+        Host *.prod.example.com !bastion.prod.example.com
+          IdentityFile ~/.ssh/prod
+        Host web
+          IdentityFile ~/.ssh/web
+          IdentityFile ~/.ssh/work
+        """
+        func files(_ address: String, name: String = "") -> [String] {
+            HostStore.identityFiles(for: Server(name: name, address: address, user: "u"), in: keys)
+        }
+        check(files("github.com") == ["~/.ssh/work"], "a HostName finds its block's key")
+        check(files("api.prod.example.com") == ["~/.ssh/prod"], "a wildcard pattern matches")
+        check(files("bastion.prod.example.com").isEmpty, "a negated pattern doesn't")
+        check(files("10.0.0.5", name: "web") == ["~/.ssh/web", "~/.ssh/work"], "the saved name matches an alias, in order")
+        check(files("example.org").isEmpty, "nothing for an unknown host")
+        let two = """
+        Host github.com
+          IdentityFile ~/.ssh/id_ed25519
+        Host github-work
+          HostName github.com
+          IdentityFile ~/.ssh/work
+        """
+        check(HostStore.identityFiles(for: Server(name: "github-work", address: "github.com", user: "git"), in: two)
+              == ["~/.ssh/work", "~/.ssh/id_ed25519"], "the block named like the host comes first")
+        check(HostStore.glob("db-?", "db-1") && !HostStore.glob("db-?", "db-12") && HostStore.glob("*", "x"), "glob")
+    }
+
+    static func places() {
+        // Older files store the place as a plain string; they still read, and labels round-trip.
+        let old = #"{"address":"a","place":"production"}"#
+        let server = try? JSONDecoder().decode(Server.self, from: Data(old.utf8))
+        check(server?.place == .production, "old place strings read")
+        var custom = Server(name: "", address: "b", user: "u")
+        custom.place = Server.Place(rawValue: "label:1234")
+        let again = (try? JSONEncoder().encode(custom)).flatMap { try? JSONDecoder().decode(Server.self, from: $0) }
+        check(again?.place.rawValue == "label:1234" && again?.place.isBuiltIn == false, "custom labels round-trip")
+        check(custom.guardsCommands == false && server?.guardsCommands == true, "only production guards by default")
     }
 
     static func knownHosts() {
@@ -173,6 +273,9 @@ enum CoreTests {
         check(verdict("new.example.com", 22, good) == .unknown, "an unknown host is new")
         try? "[app]:2222 \(good)\n".write(to: ours, atomically: true, encoding: .utf8)
         check(verdict("app", 2222, bad) == .changed, "Clavra's own record changed")
+        try? "web.example.com \(good)\n@revoked * \(bad)\n".write(to: system, atomically: true, encoding: .utf8)
+        check(verdict("other.example.com", 22, bad) == .revoked, "@revoked keys are refused, not offered as new")
+        check(verdict("web.example.com", 22, good) == .trusted, "other keys are unaffected")
         check(KnownHosts.fingerprint("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl").hasPrefix("SHA256:"), "fingerprint")
     }
 }

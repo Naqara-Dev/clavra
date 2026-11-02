@@ -56,7 +56,7 @@ struct Sidebar: View {
 
                 Menu {
                     Button("New Host…") { model.newHost() }
-                    Button("Import from ~/.ssh/config") { model.store.importSSHConfig() }
+                    Button("Import from ~/.ssh/config") { model.importing = true }
                     Divider()
                     viewMenu
                 } label: {
@@ -90,7 +90,7 @@ struct Sidebar: View {
                             Text("Hosts you save show up here.")
                                 .font(.system(size: 12))
                                 .foregroundStyle(Theme.tertiary)
-                            Button("Import ~/.ssh/config") { model.store.importSSHConfig() }
+                            Button("Import ~/.ssh/config") { model.importing = true }
                                 .buttonStyle(.plain)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Theme.brass)
@@ -237,7 +237,7 @@ struct HostSection: Identifiable {
     var tint: Color?
     var servers: [Server]
 
-    static func make(_ byPlace: [(Server.Place, [Server])], by grouping: Sidebar.Grouping) -> [HostSection] {
+    @MainActor static func make(_ byPlace: [(Server.Place, [Server])], by grouping: Sidebar.Grouping) -> [HostSection] {
         switch grouping {
         case .place:
             return byPlace.map { HostSection(id: "place:\($0.0.rawValue)", title: $0.0.label, tint: Theme.color(for: $0.0), servers: $0.1) }
@@ -272,8 +272,8 @@ private struct GroupHeader: View {
                     .foregroundStyle(Theme.tertiary)
                     .rotationEffect(.degrees(isOpen ? 90 : 0))
                     .frame(width: 10)
-                if let tint = section.tint { Circle().fill(tint).frame(width: 5, height: 5) }
-                Text(section.title).font(.system(size: 11, weight: .medium)).foregroundStyle(hovering ? Theme.secondary : Theme.tertiary)
+                Text(section.title).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(section.tint.map { $0.opacity(hovering ? 1 : 0.8) } ?? (hovering ? Theme.secondary : Theme.tertiary))
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Text(verbatim: "\(section.servers.count)").font(.system(size: 10.5)).monospacedDigit().foregroundStyle(Theme.tertiary)

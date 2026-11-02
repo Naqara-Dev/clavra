@@ -6,16 +6,29 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
         case key, password
     }
 
-    /// Where a host sits. Production gets a red mark and asks before risky commands.
-    enum Place: String, Codable, CaseIterable, Sendable {
-        case personal, staging, production
+    /// Where a host sits: Personal, Staging, Production, or a label the user made. Production gets
+    /// a coral mark and asks before risky commands. Stored as a plain string, so files from older
+    /// versions read as before.
+    struct Place: Hashable, Codable, Sendable, Identifiable {
+        let rawValue: String
+        var id: String { rawValue }
 
-        var label: String {
-            switch self {
-            case .personal: "Personal"
-            case .staging: "Staging"
-            case .production: "Production"
-            }
+        init(rawValue: String) { self.rawValue = rawValue }
+
+        static let personal = Place(rawValue: "personal")
+        static let staging = Place(rawValue: "staging")
+        static let production = Place(rawValue: "production")
+        static let builtIn = [personal, staging, production]
+
+        var isBuiltIn: Bool { Self.builtIn.contains(self) }
+
+        init(from decoder: Decoder) throws {
+            rawValue = try decoder.singleValueContainer().decode(String.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
         }
     }
 
@@ -25,7 +38,8 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var port = 22
     var user: String
     var auth: Auth = .key
-    /// Private key file, `~` allowed. Nil means the first default key found in ~/.ssh.
+    /// Private key file, `~` allowed. Nil means automatic: the key ~/.ssh/config names for this
+    /// host, then the usual ones in ~/.ssh.
     var keyPath: String?
     var place: Place = .personal
     var lastConnected: Date?
@@ -48,6 +62,13 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var guardsCommands: Bool { guardOverride ?? (place == .production) }
 
     var title: String { name.isEmpty ? address : name }
+
+    /// A `Host` block that only tells git which key to use (github.com, a GitLab server): you push
+    /// to it, you don't open a shell on it.
+    var isGitRemote: Bool {
+        let forges = ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "ssh.dev.azure.com", "vs-ssh.visualstudio.com"]
+        return user == "git" || forges.contains(address.lowercased())
+    }
 
     var target: String {
         #if DEBUG
@@ -128,28 +149,56 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
             self.automatic = automatic
         }
 
-        /// Reads the two fields of the "add a tunnel" form for `kind`.
+        /// A TCP port: a whole number from 1 to 65535.
+        static func port(_ text: String) -> Int? {
+            let text = text.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, text.allSatisfy(\.isASCII), let port = Int(text), (1...65_535).contains(port) else { return nil }
+            return port
+        }
+
+        /// `8080` (meaning localhost) or `db.internal:5432`.
+        static func endpoint(_ text: String) -> (host: String, port: Int)? {
+            let text = text.trimmingCharacters(in: .whitespaces)
+            if let port = port(text) { return ("localhost", port) }
+            guard let colon = text.lastIndex(of: ":"), let port = port(String(text[text.index(after: colon)...])) else { return nil }
+            let host = String(text[..<colon])
+            return host.isEmpty || host.contains(" ") ? nil : (host, port)
+        }
+
+        /// Reads the two fields of the "add a tunnel" form for `kind`. Anything that isn't a real
+        /// port is turned down rather than guessed at.
         static func parse(kind: Kind, local: String, remote: String) -> Server.Forward? {
-            func split(_ text: String) -> (host: String, port: Int)? {
-                let text = text.trimmingCharacters(in: .whitespaces)
-                if let port = Int(text), port > 0, port < 65_536 { return ("localhost", port) }
-                guard let colon = text.lastIndex(of: ":"), let port = Int(text[text.index(after: colon)...]), port > 0, port < 65_536 else { return nil }
-                let host = String(text[..<colon])
-                return host.isEmpty ? nil : (host, port)
-            }
+            let typedMac = local.trimmingCharacters(in: .whitespaces)
             switch kind {
             case .local:
-                guard let target = split(remote) else { return nil }
-                let mac = Int(local.trimmingCharacters(in: .whitespaces)) ?? target.port
+                guard let target = endpoint(remote) else { return nil }
+                // An empty Mac port means "the same number as on the server".
+                let mac = typedMac.isEmpty ? target.port : port(typedMac)
+                guard let mac else { return nil }
                 return Server.Forward(kind: .local, localPort: mac, host: target.host, port: target.port)
             case .remote:
-                guard let serverPort = Int(remote.trimmingCharacters(in: .whitespaces)), serverPort > 0,
-                      let mac = split(local) else { return nil }
+                guard let serverPort = port(remote), let mac = endpoint(local) else { return nil }
                 return Server.Forward(kind: .remote, localPort: mac.port, host: mac.host, port: serverPort)
             case .socks:
-                guard let mac = Int(local.trimmingCharacters(in: .whitespaces)), mac > 0, mac < 65_536 else { return nil }
+                guard let mac = port(typedMac) else { return nil }
                 return Server.Forward(kind: .socks, localPort: mac, port: 0)
             }
+        }
+
+        /// What's wrong with the form, naming the side it's on; nil while it's fine or still empty.
+        static func problem(kind: Kind, local: String, remote: String) -> String? {
+            let mac = local.trimmingCharacters(in: .whitespaces), server = remote.trimmingCharacters(in: .whitespaces)
+            switch kind {
+            case .local:
+                if !server.isEmpty, endpoint(server) == nil { return "Server side: a port from 1 to 65535, or host:port like db.internal:5432." }
+                if !mac.isEmpty, port(mac) == nil { return "Mac side: a port from 1 to 65535, or leave it empty to use the server's number." }
+            case .remote:
+                if !server.isEmpty, port(server) == nil { return "Server side: a port from 1 to 65535." }
+                if !mac.isEmpty, endpoint(mac) == nil { return "Mac side: a port from 1 to 65535, or host:port like localhost:3000." }
+            case .socks:
+                if !mac.isEmpty, port(mac) == nil { return "Mac side: a port from 1 to 65535, like 1080." }
+            }
+            return nil
         }
 
         init(from decoder: Decoder) throws {

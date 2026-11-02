@@ -52,11 +52,10 @@
   .sheet-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
   .sheet-head button { background: none; border: 0; color: var(--secondary); min-width: 44px; min-height: 44px; }
   .sheet-note { margin: 0 0 6px; color: var(--tertiary); font-size: 13px; }
-  #host-list .group { margin: 14px 2px 6px; font-size: 12.5px; color: var(--secondary); }
-  #host-list .group::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px;
-    vertical-align: 1px; background: #93c7a6; }
-  #host-list .group.production::before { background: var(--coral); }
-  #host-list .group.staging::before { background: #8fb3dc; }
+  #host-list .group { margin: 14px 2px 6px; font-size: 12.5px; font-weight: 500; color: #93c7a6; }
+  #host-list .group.production { color: var(--coral); }
+  #host-list .group.staging { color: #8fb3dc; }
+  #host-list .group.custom { color: var(--secondary); }
   #host-list button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left;
     margin-bottom: 6px; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
     font: 15px -apple-system, system-ui, sans-serif; }

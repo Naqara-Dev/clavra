@@ -14,13 +14,16 @@ struct HostEditor: View {
     @State private var password = ""
     @State private var passphrase = ""
     @State private var keys = Credentials.keysInSSHFolder()
-    @State private var tab = Tab.basics
+    @State private var tab = UserDefaults.standard.string(forKey: "ClavraEditorTab") == "more" ? Tab.more : .basics
     @State private var newLocal = ""
     @State private var newRemote = ""
     @State private var newKind = Server.Forward.Kind.local
     @State private var tagsText = ""
     @State private var testing = false
     @State private var outcome: ConnectionTest.Outcome?
+    /// Keys ~/.ssh/config names for this host, and everything Automatic would try.
+    @State private var configured: [String] = []
+    @State private var automatic: [String] = []
 
     private enum Tab: CaseIterable { case basics, more }
 
@@ -32,17 +35,20 @@ struct HostEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(isNew ? "New Host" : "Edit Host").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
                 Spacer()
                 Segments(options: Tab.allCases, selection: $tab) { $0 == .basics ? "Basics" : "More" }
                     .frame(width: 170)
             }
+            .padding(.bottom, 20)
 
-            if tab == .basics { basics } else { more }
+            Group { if tab == .basics { basics } else { more } }
 
-            if let outcome { TestResult(outcome: outcome) { trust($0) } }
+            if let outcome { TestResult(outcome: outcome) { trust($0) }.padding(.top, 16) }
+
+            Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, -24).padding(.top, 22)
 
             HStack(spacing: 8) {
                 if let delete {
@@ -52,153 +58,256 @@ struct HostEditor: View {
                 Button(testing ? "Testing…" : "Test Connection") { test() }
                     .buttonStyle(QuietButtonStyle()).disabled(!canSave || testing)
                     .help("Reach the server, check its key and sign in, without opening a tab")
-                Spacer()
+                Spacer(minLength: 12)
                 Button("Cancel") { dismiss() }.buttonStyle(QuietButtonStyle()).keyboardShortcut(.cancelAction)
                 Button("Save") { commit(connect: false) }.buttonStyle(QuietButtonStyle()).disabled(!canSave)
                 Button("Save and Connect") { commit(connect: true) }.buttonStyle(BrassButtonStyle())
                     .keyboardShortcut(.defaultAction).disabled(!canSave).opacity(canSave ? 1 : 0.5)
             }
-            .padding(.top, 4)
+            .padding(.top, 16)
         }
         .padding(24)
-        .frame(width: 500)
+        .frame(width: 580)
         .background(Theme.window)
         .onAppear {
             password = Keychain.password(for: server.id) ?? ""
             passphrase = Keychain.passphrase(for: server.id) ?? ""
             tagsText = server.tags.joined(separator: ", ")
+            findKeys()
         }
         .onChange(of: tagsText) {
             server.tags = tagsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
+        .onChange(of: server.address) { findKeys() }
+        .onChange(of: server.name) { findKeys() }
     }
 
     @ViewBuilder private var basics: some View {
-        section("Server") {
-            HStack(spacing: 8) {
-                SoftField("Address or IP", text: $server.address)
-                SoftField("Port", text: portText).frame(width: 74)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 10) {
+                FormField("Address") { SoftField("10.0.1.12 or api.example.com", text: $server.address) }
+                FormField("Port") { SoftField("22", text: portText) }.frame(width: 84)
             }
-            SoftField("Optional, shown in the sidebar", text: $server.name, prefix: "Name")
-            SoftField("nginx, client-a", text: $tagsText, prefix: "Tags")
-        }
-
-        section("Sign in as") {
-            Menu {
-                Button("This host only") { server.identity = nil }
-                if !model.identities.identities.isEmpty { Divider() }
-                ForEach(model.identities.identities) { item in
-                    Button("\(item.title)  ·  \(item.summary)") { server.identity = item.id }
-                }
-                Divider()
-                Button("Save These Details as an Identity…", action: makeIdentity)
-                    .disabled(server.user.trimmingCharacters(in: .whitespaces).isEmpty)
-            } label: {
-                pickerLabel(icon: "person.crop.circle", text: identity.map { "\($0.title) · \($0.summary)" } ?? "This host only")
+            HStack(alignment: .top, spacing: 10) {
+                FormField("Name") { SoftField("Shown in the sidebar", text: $server.name) }
+                FormField("Tags") { SoftField("nginx, client-a", text: $tagsText) }
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
+            FormField("Label", note: server.place == .production
+                      ? "Production tabs carry a coral mark and ask before risky commands." : nil) {
+                LabelPicker(place: $server.place, store: model.store)
+            }
 
-            if let identity {
-                Text("Uses \(identity.title)'s user, key and password. Change them once in Keys › Identities and every host that uses it follows.")
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
-            } else {
-                SoftField("root, deploy…", text: $server.user, prefix: "User")
-                Segments(options: Server.Auth.allCases, selection: $server.auth) { $0 == .key ? "Key" : "Password" }
-                if server.auth == .key {
-                    Menu {
-                        Button("Default (id_ed25519, then id_rsa)") { server.keyPath = nil }
-                        if !keys.isEmpty { Divider() }
-                        ForEach(keys, id: \.self) { key in Button(key) { server.keyPath = key } }
-                        Divider()
-                        Button("Choose File…", action: chooseKey)
-                    } label: {
-                        pickerLabel(icon: "key", text: server.keyPath ?? "Default key")
+            Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+
+            FormField("Sign in as", note: identity.map { "Uses \($0.title)'s user, key and password. Change them once in Keys and every host that uses it follows." }) {
+                Dropdown(icon: "person.crop.circle", title: identity?.title ?? "This host only",
+                         detail: identity?.summary, entries: identityEntries)
+            }
+            if identity == nil {
+                HStack(alignment: .top, spacing: 10) {
+                    FormField("User") { SoftField("root, deploy…", text: $server.user) }
+                    FormField("With") {
+                        Segments(options: Server.Auth.allCases, selection: $server.auth) { $0 == .key ? "Key" : "Password" }
                     }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    SoftField("Only if the key has one", text: $passphrase, secure: true, prefix: "Passphrase")
+                    .frame(width: 190)
+                }
+                if server.auth == .key {
+                    HStack(alignment: .top, spacing: 10) {
+                        FormField("Key") {
+                            Dropdown(icon: "key", title: server.keyPath.map(Self.fileName) ?? "Automatic",
+                                     detail: server.keyPath ?? automaticDetail, entries: keyEntries)
+                        }
+                        FormField("Passphrase") { SoftField("If the key has one", text: $passphrase, secure: true) }
+                            .frame(width: 190)
+                    }
                 } else {
-                    SoftField("Saved to the Keychain", text: $password, secure: true, prefix: "Password")
+                    FormField("Password") { SoftField("Saved to the Keychain", text: $password, secure: true) }
                 }
-                Text("Kept in your Mac's Keychain. Clavra never writes it anywhere else.")
+                Text("Passwords and passphrases stay in your Mac's Keychain.")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
-            }
-        }
-
-        section("This server is") {
-            HStack(spacing: 8) {
-                ForEach(Server.Place.allCases, id: \.self) { place in
-                    PlaceOption(place: place, isOn: server.place == place) { server.place = place }
-                }
             }
         }
     }
 
     @ViewBuilder private var more: some View {
-        section("Connect through") {
-            Menu {
-                Button("Directly") { server.jump = nil }
-                let candidates = others.filter { $0.id != server.id && $0.jump != server.id }
-                if !candidates.isEmpty { Divider() }
-                ForEach(candidates) { host in Button(host.title) { server.jump = host.id } }
-            } label: {
-                pickerLabel(icon: "arrow.triangle.turn.up.right.diamond",
-                            text: others.first { $0.id == server.jump }.map { "\($0.title), then this server" } ?? "Directly")
+        VStack(alignment: .leading, spacing: 18) {
+            FormField("Connect through",
+                      note: "A jump host (bastion) you reach first. The address is then looked up from there, so private names and IPs work.") {
+                let jump = others.first { $0.id == server.jump }
+                Dropdown(icon: "arrow.triangle.turn.up.right.diamond", title: jump?.title ?? "Directly",
+                         detail: jump.map { "\($0.target), then this server" }, entries: jumpEntries)
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            Text("A jump host (bastion) you reach first. The address above is then looked up from there, so private names and IPs work.")
-                .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
-        }
 
-        section("Tunnels when connected") {
-            ForEach($server.forwards) { $forward in
-                HStack(spacing: 8) {
-                    Text(verbatim: forward.summary).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.ink)
-                    Spacer()
-                    Toggle("Automatic", isOn: $forward.automatic).toggleStyle(.checkbox).font(.system(size: 11.5))
-                        .help("Open as soon as the session connects")
-                    Button { server.forwards.removeAll { $0.id == forward.id } } label: {
-                        Image(systemName: "minus.circle").foregroundStyle(Theme.tertiary)
+            FormField("Tunnels", note: ForwardFields.note(newKind)) {
+                if !server.forwards.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach($server.forwards) { $forward in
+                            HStack(spacing: 10) {
+                                Text(verbatim: forward.summary).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.ink)
+                                Spacer()
+                                Toggle("Open on connect", isOn: $forward.automatic).toggleStyle(.checkbox)
+                                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+                                Button { server.forwards.removeAll { $0.id == forward.id } } label: {
+                                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                                        .frame(width: 22, height: 22).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove this tunnel")
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 38)
+                            if forward.id != server.forwards.last?.id { Rectangle().fill(Theme.line).frame(height: 1) }
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
                 }
-                .frame(height: 26)
-            }
-            HStack(spacing: 6) {
-                Picker("", selection: $newKind) {
-                    Text("To server").tag(Server.Forward.Kind.local)
-                    Text("To Mac").tag(Server.Forward.Kind.remote)
-                    Text("SOCKS").tag(Server.Forward.Kind.socks)
+                HStack(spacing: 8) {
+                    Dropdown(title: Self.kindName(newKind), entries: kindEntries).frame(width: 128)
+                    ForwardFields(kind: newKind, local: $newLocal, remote: $newRemote)
+                    Button("Add", action: addForward).buttonStyle(QuietButtonStyle())
+                        .disabled(Server.Forward.parse(kind: newKind, local: newLocal, remote: newRemote) == nil)
                 }
-                .labelsHidden().fixedSize()
-                ForwardFields(kind: newKind, local: $newLocal, remote: $newRemote)
-                Button("Add", action: addForward).buttonStyle(QuietButtonStyle())
-                    .disabled(Server.Forward.parse(kind: newKind, local: newLocal, remote: newRemote) == nil)
+                if let problem = ForwardFields.problem(kind: newKind, local: newLocal, remote: newRemote) {
+                    Text(problem.text).font(.system(size: 11.5))
+                        .foregroundStyle(problem.isWarning ? Theme.brass : Theme.color(for: .production))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            FormField("Run after connecting") {
+                SoftField("cd /srv/app && tmux attach -t main", text: $server.startup, mono: true)
+            }
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Ask before risky commands").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                    Text("rm -rf, DROP TABLE, shutdown, docker rm and the like wait for a yes. On by default for Production.")
+                        .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Toggle("", isOn: Binding(get: { server.guardsCommands }, set: { server.guardOverride = $0 }))
+                    .toggleStyle(.switch).labelsHidden().controlSize(.small)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+
+            FormField("Notes") {
+                TextEditor(text: $server.notes)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 8)
+                    .frame(height: 64)
+                    .overlay(alignment: .topLeading) {
+                        if server.notes.isEmpty {
+                            Text("Anything worth remembering about this server")
+                                .font(.system(size: 13)).foregroundStyle(Theme.tertiary)
+                                .padding(.horizontal, 12).padding(.vertical, 8).allowsHitTesting(false)
+                        }
+                    }
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
             }
         }
+    }
 
-        section("When the shell is up, type") {
-            SoftField("cd /srv/app && tmux attach -t main", text: $server.startup, mono: true)
-        }
+    // MARK: Dropdown lists
 
-        section("Risky commands") {
-            Toggle("Ask before running them", isOn: Binding(get: { server.guardsCommands }, set: { server.guardOverride = $0 }))
-                .toggleStyle(.switch).font(.system(size: 13))
-            Text("rm -rf, DROP TABLE, shutdown, docker rm and the like wait for a yes. On by default for production.")
-                .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+    private func identityEntries() -> [DropdownEntry] {
+        var list: [DropdownEntry] = [
+            .item("This host only", detail: "Type a user and key below", icon: "person.crop.circle", isOn: identity == nil) { server.identity = nil },
+        ]
+        if !model.identities.identities.isEmpty {
+            list.append(.divider("ids"))
+            list.append(.heading("Identities"))
+            for item in model.identities.identities {
+                list.append(.item(item.title, detail: item.summary, icon: "person.2", isOn: server.identity == item.id, id: item.id.uuidString) {
+                    server.identity = item.id
+                })
+            }
         }
+        if identity == nil, !server.user.trimmingCharacters(in: .whitespaces).isEmpty {
+            list.append(.divider("save"))
+            list.append(.item("Save These Details as an Identity", detail: "Reuse this user and key on other hosts", icon: "plus", action: makeIdentity))
+        }
+        return list
+    }
 
-        section("Notes") {
-            TextEditor(text: $server.notes)
-                .font(.system(size: 12.5))
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .frame(height: 64)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+    private func keyEntries() -> [DropdownEntry] {
+        var list: [DropdownEntry] = [
+            .item("Automatic", detail: automaticDetail, icon: "magnifyingglass", isOn: server.keyPath == nil, id: "auto") { server.keyPath = nil },
+        ]
+        if !keys.isEmpty {
+            list.append(.divider("keys"))
+            list.append(.heading("In ~/.ssh"))
+            for key in keys {
+                let matches = configured.contains { Credentials.expand($0) == Credentials.expand(key) }
+                list.append(.item(Self.fileName(key), detail: matches ? "Named for this host in ~/.ssh/config" : nil,
+                                  icon: "key", isOn: server.keyPath == key, id: key) { server.keyPath = key })
+            }
         }
+        list.append(.divider("file"))
+        list.append(.item("Choose File…", icon: "folder", action: chooseKey))
+        return list
+    }
+
+    private func jumpEntries() -> [DropdownEntry] {
+        var list: [DropdownEntry] = [
+            .item("Directly", detail: "Straight from this Mac", icon: "arrow.right", isOn: server.jump == nil) { server.jump = nil },
+        ]
+        let candidates = others.filter { $0.id != server.id && $0.jump != server.id && !$0.isGitRemote }
+        if !candidates.isEmpty {
+            list.append(.divider("hosts"))
+            list.append(.heading("Through a saved host"))
+            for host in candidates {
+                list.append(.item(host.title, detail: host.target, icon: "server.rack", isOn: server.jump == host.id, id: host.id.uuidString) {
+                    server.jump = host.id
+                })
+            }
+        }
+        return list
+    }
+
+    private func kindEntries() -> [DropdownEntry] {
+        Server.Forward.Kind.allCases.map { kind in
+            .item(Self.kindName(kind), detail: Self.kindDetail(kind), isOn: newKind == kind, id: kind.rawValue) { newKind = kind }
+        }
+    }
+
+    private static func kindName(_ kind: Server.Forward.Kind) -> String {
+        switch kind {
+        case .local: "To server"
+        case .remote: "To Mac"
+        case .socks: "SOCKS"
+        }
+    }
+
+    private static func kindDetail(_ kind: Server.Forward.Kind) -> String {
+        switch kind {
+        case .local: "Like ssh -L"
+        case .remote: "Like ssh -R"
+        case .socks: "Like ssh -D"
+        }
+    }
+
+    private static func fileName(_ path: String) -> String { (path as NSString).lastPathComponent }
+
+    /// What Automatic will use, in a few words.
+    private var automaticDetail: String {
+        if let first = configured.first { return "Uses \(Self.fileName(first)), from ~/.ssh/config" }
+        if let first = automatic.first {
+            let name = Self.fileName(first)
+            return automatic.count > 1 ? "Tries \(name), then \(automatic.count - 1) more" : "Uses \(name)"
+        }
+        return "No keys found in ~/.ssh"
+    }
+
+    private func findKeys() {
+        configured = Credentials.configuredKeys(for: server)
+        automatic = Credentials.automaticKeys(for: server)
     }
 
     private func addForward() {
@@ -208,29 +317,8 @@ struct HostEditor: View {
         newRemote = ""
     }
 
-    private func pickerLabel(icon: String, text: String) -> some View {
-        HStack {
-            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(Theme.tertiary)
-            Text(text).font(.system(size: 13)).foregroundStyle(Theme.ink)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
-        .contentShape(Rectangle())
-    }
-
     private var portText: Binding<String> {
         Binding(get: { String(server.port) }, set: { server.port = Int($0.filter(\.isNumber)) ?? 22 })
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-            content()
-        }
     }
 
     private func chooseKey() {
@@ -319,26 +407,125 @@ struct Segments<Option: Hashable>: View {
     }
 }
 
-private struct PlaceOption: View {
-    var place: Server.Place
-    var isOn: Bool
-    var action: () -> Void
+/// Personal, Staging, Production and the user's own labels, as chips; the last one makes a new label.
+private struct LabelPicker: View {
+    @Binding var place: Server.Place
+    var store: HostStore
+    @State private var labels = LabelStore.shared
+    /// The label being made or changed, if the small form under the chips is open.
+    @State private var draft: HostLabel?
+    @State private var isNewDraft = false
 
     var body: some View {
-        let tint = Theme.color(for: place)
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Circle().fill(tint).frame(width: 7, height: 7)
-                Text(place.label).font(.system(size: 12.5, weight: .medium)).foregroundStyle(isOn ? Theme.ink : Theme.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            FlowLayout(spacing: 8) {
+                ForEach(labels.choices) { choice in
+                    LabelChip(title: choice.label, tint: Theme.color(for: choice), isOn: labels.resolve(place) == choice) {
+                        place = choice
+                    }
+                    .contextMenu {
+                        if let custom = labels.label(for: choice) {
+                            Button("Edit Label…") { draft = custom; isNewDraft = false }
+                            Button("Delete Label", role: .destructive) { remove(custom) }
+                        }
+                    }
+                }
+                Button {
+                    draft = HostLabel(name: "", tint: HostLabel.Tint.allCases.first { tint in !labels.labels.contains { $0.tint == tint } && ![.sage, .mist, .coral].contains(tint) } ?? .lilac)
+                    isNewDraft = true
+                } label: {
+                    Label("New Label", systemImage: "plus").font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.secondary)
+                        .padding(.horizontal, 12).frame(height: 30)
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Make your own label, like Client A or Lab")
             }
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(isOn ? tint.opacity(0.13) : Theme.field))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(isOn ? tint.opacity(0.5) : Theme.line))
-            .contentShape(Rectangle())
+
+            if let binding = Binding($draft) {
+                LabelForm(draft: binding, isNew: isNewDraft, cancel: { draft = nil }, save: save)
+            }
+        }
+    }
+
+    private func save(_ label: HostLabel) {
+        if isNewDraft {
+            let made = labels.add(name: label.name, tint: label.tint)
+            place = made.place
+        } else {
+            labels.save(label)
+        }
+        draft = nil
+    }
+
+    private func remove(_ label: HostLabel) {
+        if place == label.place { place = .personal }
+        store.moveHosts(from: label.place)
+        labels.delete(label)
+    }
+}
+
+/// One label to pick: quiet when it isn't chosen, washed in its colour when it is.
+private struct LabelChip: View {
+    var title: String
+    var tint: Color
+    var isOn: Bool
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(isOn ? tint : hovering ? Theme.ink : Theme.secondary)
+                .padding(.horizontal, 13)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(isOn ? tint.opacity(0.14) : Theme.field))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(isOn ? tint.opacity(0.4) : Theme.line))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: isOn)
+    }
+}
+
+/// Name a label and give it a colour.
+private struct LabelForm: View {
+    @Binding var draft: HostLabel
+    var isNew: Bool
+    var cancel: () -> Void
+    var save: (HostLabel) -> Void
+
+    private var canSave: Bool { !draft.name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SoftField("Client A, Lab, Database…", text: $draft.name)
+            HStack(spacing: 8) {
+                ForEach(HostLabel.Tint.allCases, id: \.self) { tint in
+                    let color = Theme.color(for: tint)
+                    Button { draft.tint = tint } label: {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).fill(color.opacity(0.85))
+                            .frame(width: 22, height: 22)
+                            .padding(3)
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(draft.tint == tint ? color : .clear, lineWidth: 1.5))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(tint.rawValue.capitalized)
+                }
+                Spacer()
+                Button("Cancel", action: cancel).buttonStyle(QuietButtonStyle())
+                Button(isNew ? "Add Label" : "Save Label") { save(draft) }.buttonStyle(BrassButtonStyle())
+                    .disabled(!canSave).opacity(canSave ? 1 : 0.5)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
     }
 }
 

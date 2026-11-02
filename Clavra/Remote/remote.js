@@ -305,15 +305,18 @@
   function drawHosts() {
     const list = $("host-list");
     list.innerHTML = "";
-    const order = { production: 0, staging: 1, personal: 2 };
+    // Production, staging, the user's own labels, then personal (Clavra 0.5 sends no names).
+    const order = { production: 0, staging: 1, personal: 3 };
     const label = { production: "Production", staging: "Staging", personal: "Personal" };
+    const rank = (host) => order[host.place] ?? 2;
     let group = "";
-    for (const host of hosts.slice().sort((a, b) => (order[a.place] ?? 3) - (order[b.place] ?? 3))) {
+    const sorted = hosts.slice().sort((a, b) => rank(a) - rank(b) || (a.placeName || "").localeCompare(b.placeName || ""));
+    for (const host of sorted) {
       if (host.place !== group) {
         group = host.place;
         const heading = document.createElement("p");
-        heading.className = "group " + group;
-        heading.textContent = label[group] || group;
+        heading.className = "group " + (order[group] === undefined ? "custom" : group);
+        heading.textContent = host.placeName || label[group] || "Other";
         list.appendChild(heading);
       }
       const button = document.createElement("button");

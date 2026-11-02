@@ -106,34 +106,23 @@ private struct IdentityEditor: View {
             Text(isNew ? "New Identity" : "Edit \(identity.title)")
                 .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
 
-            VStack(alignment: .leading, spacing: 8) {
-                SoftField("Work deploy, Team root…", text: $identity.name, prefix: "Name")
-                SoftField("root, deploy…", text: $identity.user, prefix: "User")
-                Segments(options: Server.Auth.allCases, selection: $identity.auth) { $0 == .key ? "Key" : "Password" }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 10) {
+                    FormField("Name") { SoftField("Work deploy, Team root…", text: $identity.name) }
+                    FormField("User") { SoftField("root, deploy…", text: $identity.user) }
+                }
+                FormField("With") {
+                    Segments(options: Server.Auth.allCases, selection: $identity.auth) { $0 == .key ? "Key" : "Password" }
+                }
                 if identity.auth == .key {
-                    Menu {
-                        Button("Default (id_ed25519, then id_rsa)") { identity.keyPath = nil }
-                        if !keys.isEmpty { Divider() }
-                        ForEach(keys, id: \.self) { key in Button(key) { identity.keyPath = key } }
-                        Divider()
-                        Button("Choose File…", action: chooseKey)
-                    } label: {
-                        HStack {
-                            Image(systemName: "key").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
-                            Text(identity.keyPath ?? "Default key").font(.system(size: 13)).foregroundStyle(Theme.ink)
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.field))
-                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.line))
-                        .contentShape(Rectangle())
+                    FormField("Key") {
+                        Dropdown(icon: "key", title: identity.keyPath.map { ($0 as NSString).lastPathComponent } ?? "Automatic",
+                                 detail: identity.keyPath ?? "Your usual keys in ~/.ssh, or the one ~/.ssh/config names for the host",
+                                 entries: keyEntries)
                     }
-                    .menuStyle(.button).buttonStyle(.plain)
-                    SoftField("Only if the key has one", text: $secret, secure: true, prefix: "Passphrase")
+                    FormField("Passphrase") { SoftField("If the key has one", text: $secret, secure: true) }
                 } else {
-                    SoftField("Saved to the Keychain", text: $secret, secure: true, prefix: "Password")
+                    FormField("Password") { SoftField("Saved to the Keychain", text: $secret, secure: true) }
                 }
                 Text("Kept in your Mac's Keychain. Every host that signs in as this identity uses it.")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
@@ -153,8 +142,8 @@ private struct IdentityEditor: View {
                 .disabled(!canSave)
             }
         }
-        .padding(22)
-        .frame(width: 440)
+        .padding(24)
+        .frame(width: 480)
         .background(Theme.window)
         .onAppear {
             secret = (identity.auth == .password ? Keychain.password(for: identity.id) : Keychain.passphrase(for: identity.id)) ?? ""
@@ -162,6 +151,25 @@ private struct IdentityEditor: View {
         .onChange(of: identity.auth) {
             secret = (identity.auth == .password ? Keychain.password(for: identity.id) : Keychain.passphrase(for: identity.id)) ?? ""
         }
+    }
+
+    private func keyEntries() -> [DropdownEntry] {
+        var list: [DropdownEntry] = [
+            .item("Automatic", detail: "The key ~/.ssh/config names for the host, then your usual keys", icon: "magnifyingglass",
+                  isOn: identity.keyPath == nil, id: "auto") { identity.keyPath = nil },
+        ]
+        if !keys.isEmpty {
+            list.append(.divider("keys"))
+            list.append(.heading("In ~/.ssh"))
+            for key in keys {
+                list.append(.item((key as NSString).lastPathComponent, icon: "key", isOn: identity.keyPath == key, id: key) {
+                    identity.keyPath = key
+                })
+            }
+        }
+        list.append(.divider("file"))
+        list.append(.item("Choose File…", icon: "folder", action: chooseKey))
+        return list
     }
 
     private func chooseKey() {

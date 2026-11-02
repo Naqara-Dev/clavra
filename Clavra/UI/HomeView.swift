@@ -103,7 +103,7 @@ struct HomeView: View {
                 Spacer()
                 Menu {
                     Button("New Host…") { model.newHost() }
-                    Button("Import from ~/.ssh/config") { model.store.importSSHConfig() }
+                    Button("Import from ~/.ssh/config") { model.importing = true }
                 } label: {
                     Label("Add", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
                 }
@@ -119,8 +119,7 @@ struct HomeView: View {
 
             ForEach(groups, id: \.0) { place, servers in
                 HStack(spacing: 6) {
-                    Circle().fill(Theme.color(for: place)).frame(width: 6, height: 6)
-                    Text(place.label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
+                    Text(place.label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.color(for: place).opacity(0.9))
                     Text(verbatim: "\(servers.count)").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 }
                 .padding(.top, 18)
@@ -146,7 +145,7 @@ struct HomeView: View {
                 .font(.system(size: 13)).foregroundStyle(Theme.secondary)
             HStack(spacing: 10) {
                 Button("New Host") { model.newHost() }.buttonStyle(BrassButtonStyle())
-                Button("Import ~/.ssh/config") { model.store.importSSHConfig() }.buttonStyle(QuietButtonStyle())
+                Button("Import ~/.ssh/config") { model.importing = true }.buttonStyle(QuietButtonStyle())
             }
         }
         .frame(maxWidth: .infinity)

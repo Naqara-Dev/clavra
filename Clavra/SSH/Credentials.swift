@@ -14,6 +14,7 @@ enum ClavraError: LocalizedError {
     case notConnected
     case encryptedECDSA
     case wrongPassphrase
+    case revokedHostKey
 
     var errorDescription: String? {
         switch self {
@@ -23,6 +24,7 @@ enum ClavraError: LocalizedError {
         case .needsPassphrase: "This key is protected by a passphrase. Add it in the host's settings."
         case .noPassword: "No password saved for this host. Add it in the host's settings."
         case .hostKeyRejected: "You didn't trust the server's key, so Clavra didn't connect."
+        case .revokedHostKey: "This server showed a key that's marked @revoked in known_hosts, so Clavra refused it. Ask whoever runs the server what changed."
         case .notConnected: "This tab isn't connected right now."
         case .wrongPassphrase: "The saved passphrase doesn't open this key. Check it in the host's settings."
         case .encryptedECDSA: "Clavra can't open passphrase-protected ECDSA keys yet. Use an ed25519 key, or one without a passphrase."
@@ -32,7 +34,9 @@ enum ClavraError: LocalizedError {
 
 /// Turns a host's saved settings into what Citadel needs to log in.
 enum Credentials {
-    static let defaultKeys = ["~/.ssh/id_ed25519", "~/.ssh/id_rsa"]
+    static let defaultKeys = ["~/.ssh/id_ed25519", "~/.ssh/id_ecdsa", "~/.ssh/id_rsa"]
+    /// Servers stop listening after a handful of wrong keys (OpenSSH's MaxAuthTries is 6).
+    static let automaticLimit = 5
 
     static func expand(_ path: String) -> String { (path as NSString).expandingTildeInPath }
 
@@ -49,6 +53,27 @@ enum Credentials {
         }
     }
 
+    /// What ~/.ssh/config says about keys for this host.
+    static func configuredKeys(for server: Server) -> [String] {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".ssh", directoryHint: .isDirectory)
+        guard let text = try? String(contentsOf: folder.appending(path: "config"), encoding: .utf8) else { return [] }
+        return HostStore.identityFiles(for: server, in: HostStore.expandedConfig(text, base: folder))
+            .filter { FileManager.default.fileExists(atPath: expand($0)) }
+    }
+
+    /// The keys "Automatic" tries, in order: the ones ~/.ssh/config names for this host, the usual
+    /// names, then any other private key in ~/.ssh, the way ssh would offer them.
+    static func automaticKeys(for server: Server) -> [String] {
+        var list: [String] = []
+        func add(_ path: String) {
+            if !list.contains(where: { expand($0) == expand(path) }) { list.append(path) }
+        }
+        configuredKeys(for: server).forEach(add)
+        defaultKeys.filter { FileManager.default.fileExists(atPath: expand($0)) }.forEach(add)
+        keysInSSHFolder().forEach(add)
+        return Array(list.prefix(automaticLimit))
+    }
+
     /// `password` and `passphrase`, when given, stand in for what's saved (Test Connection uses
     /// what's typed in the editor before it's saved).
     static func method(for server: Server, password typedPassword: String? = nil, passphrase typedPassphrase: String? = nil) throws -> SSHAuthenticationMethod {
@@ -57,39 +82,90 @@ enum Credentials {
             guard let password = typedPassword.flatMap({ $0.isEmpty ? nil : $0 }) ?? Keychain.password(for: server.secretsID) else { throw ClavraError.noPassword }
             return .passwordBased(username: server.user, password: password)
         case .key:
-            let path = server.keyPath ?? defaultKeys.first { FileManager.default.fileExists(atPath: expand($0)) }
-            guard let path else { throw ClavraError.noKey }
-            guard let text = try? String(contentsOfFile: expand(path), encoding: .utf8) else { throw ClavraError.unreadableKey(path) }
             let passphrase = (typedPassphrase.flatMap { $0.isEmpty ? nil : $0 } ?? Keychain.passphrase(for: server.secretsID)).map { Data($0.utf8) }
+            if let path = server.keyPath { return try load(path, user: server.user, passphrase: passphrase) }
+            return try automatic(for: server, passphrase: passphrase).method
+        }
+    }
+
+    /// Every key "Automatic" can open, offered one after another; `tried` says which went last,
+    /// which is the one that worked once signed in.
+    static func automatic(for server: Server, passphrase: Data?) throws -> (method: SSHAuthenticationMethod, tried: KeyAttempts) {
+        var loaded: [(String, SSHAuthenticationMethod)] = []
+        var firstError: Error?
+        for path in automaticKeys(for: server) {
             do {
-                let type = try SSHKeyDetection.detectPrivateKeyType(from: text)
-                switch type {
-                case .ed25519:
-                    return .ed25519(username: server.user, privateKey: try Curve25519.Signing.PrivateKey(sshEd25519: text, decryptionKey: passphrase))
-                case .rsa:
-                    return .rsa(username: server.user, privateKey: try Insecure.RSA.PrivateKey(sshRsa: text, decryptionKey: passphrase))
-                case .ecdsaP256, .ecdsaP384, .ecdsaP521:
-                    return try ECDSAKey.method(user: server.user, text: text)
-                default:
-                    throw ClavraError.unsupportedKey(type.description)
-                }
-            } catch let error as ClavraError {
-                throw error
-            } catch where text.contains("BEGIN EC PRIVATE KEY") || text.contains("BEGIN PRIVATE KEY") {
-                // Older PEM files: CryptoKit reads these directly.
-                return try ECDSAKey.method(user: server.user, text: text)
+                loaded.append((path, try load(path, user: server.user, passphrase: passphrase)))
             } catch {
-                // The cipher name is base64 inside an OpenSSH file, so ask the parser what went wrong.
-                let raw = String(describing: error)
-                if raw.contains("missingDecryptionKey") || (passphrase == nil && text.contains("ENCRYPTED")) {
-                    throw ClavraError.needsPassphrase
-                }
-                if passphrase != nil, raw.contains("invalidCheck") || raw.contains("decrypt") || raw.contains("invalidPadding") {
-                    throw ClavraError.wrongPassphrase
-                }
-                throw error
+                // A key behind a passphrase this host doesn't have is skipped, as ssh skips it.
+                if firstError == nil { firstError = error }
             }
         }
+        guard !loaded.isEmpty else { throw firstError ?? ClavraError.noKey }
+        let attempts = KeyAttempts(loaded)
+        return (.custom(attempts), attempts)
+    }
+
+    private static func load(_ path: String, user: String, passphrase: Data?) throws -> SSHAuthenticationMethod {
+        guard let text = try? String(contentsOfFile: expand(path), encoding: .utf8) else { throw ClavraError.unreadableKey(path) }
+        do {
+            let type = try SSHKeyDetection.detectPrivateKeyType(from: text)
+            switch type {
+            case .ed25519:
+                return .ed25519(username: user, privateKey: try Curve25519.Signing.PrivateKey(sshEd25519: text, decryptionKey: passphrase))
+            case .rsa:
+                return .rsa(username: user, privateKey: try Insecure.RSA.PrivateKey(sshRsa: text, decryptionKey: passphrase))
+            case .ecdsaP256, .ecdsaP384, .ecdsaP521:
+                return try ECDSAKey.method(user: user, text: text)
+            default:
+                throw ClavraError.unsupportedKey(type.description)
+            }
+        } catch let error as ClavraError {
+            throw error
+        } catch where text.contains("BEGIN EC PRIVATE KEY") || text.contains("BEGIN PRIVATE KEY") {
+            // Older PEM files: CryptoKit reads these directly.
+            return try ECDSAKey.method(user: user, text: text)
+        } catch {
+            // The cipher name is base64 inside an OpenSSH file, so ask the parser what went wrong.
+            let raw = String(describing: error)
+            if raw.contains("missingDecryptionKey") || (passphrase == nil && text.contains("ENCRYPTED")) {
+                throw ClavraError.needsPassphrase
+            }
+            if passphrase != nil, raw.contains("invalidCheck") || raw.contains("decrypt") || raw.contains("invalidPadding") {
+                throw ClavraError.wrongPassphrase
+            }
+            throw error
+        }
+    }
+}
+
+/// Offers several keys in turn, like ssh does: when the server turns one down, NIO asks again and
+/// the next one goes.
+final class KeyAttempts: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+    private var queue: [(path: String, method: SSHAuthenticationMethod)]
+    private let lock = NSLock()
+    private var last: String?
+
+    init(_ keys: [(String, SSHAuthenticationMethod)]) {
+        queue = keys.map { (path: $0.0, method: $0.1) }
+    }
+
+    /// The key offered most recently.
+    var lastTried: String? { lock.withLock { last } }
+
+    func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+                                nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
+        let next: (path: String, method: SSHAuthenticationMethod)? = lock.withLock {
+            guard !queue.isEmpty else { return nil }
+            let item = queue.removeFirst()
+            last = item.path
+            return item
+        }
+        guard let next else {
+            nextChallengePromise.fail(SSHClientError.allAuthenticationOptionsFailed)
+            return
+        }
+        next.method.nextAuthenticationType(availableMethods: availableMethods, nextChallengePromise: nextChallengePromise)
     }
 }
 
@@ -181,6 +257,11 @@ final class HostKeyCheck: NIOSSHClientServerAuthenticationDelegate, Sendable {
 
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         let key = String(openSSHPublicKey: hostKey)
+        // A revoked key is refused before anyone is asked; there's nothing to decide.
+        if KnownHosts.isRevoked(key) {
+            validationCompletePromise.fail(ClavraError.revokedHostKey)
+            return
+        }
         let decide = decide
         Task {
             if await decide(key) {

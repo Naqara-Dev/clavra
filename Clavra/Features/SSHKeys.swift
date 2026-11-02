@@ -136,17 +136,27 @@ enum SSHKeys {
         let clean = name.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
         guard !clean.isEmpty else { throw KeyError.badName }
         let target = folder.appending(path: clean)
-        guard !FileManager.default.fileExists(atPath: target.path) else { throw KeyError.exists(clean) }
+        guard !FileManager.default.fileExists(atPath: target.path),
+              !FileManager.default.fileExists(atPath: target.path + ".pub") else { throw KeyError.exists(clean) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 
         // The key is made without a passphrase, then re-encrypted with `-p`, which asks for the new
-        // one through an askpass helper instead of an argument other processes could see.
-        try await run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-a", "100", "-N", "", "-C", comment, "-f", target.path])
+        // one through an askpass helper instead of an argument other processes could see. Both steps
+        // happen in a private scratch folder; only a finished key is moved into ~/.ssh, so a failed
+        // second step never leaves an unprotected key behind.
+        let scratch = folder.appending(path: ".clavra-new-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let draft = scratch.appending(path: clean)
+        try await run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-a", "100", "-N", "", "-C", comment, "-f", draft.path])
         if !passphrase.isEmpty {
             try await withAskpass(passphrase) { env in
-                try await run("/usr/bin/ssh-keygen", ["-q", "-p", "-a", "100", "-P", "", "-f", target.path], environment: env)
+                try await run("/usr/bin/ssh-keygen", ["-q", "-p", "-a", "100", "-P", "", "-f", draft.path], environment: env)
             }
         }
+        guard !FileManager.default.fileExists(atPath: target.path) else { throw KeyError.exists(clean) }
+        try FileManager.default.moveItem(at: draft, to: target)
+        try FileManager.default.moveItem(at: scratch.appending(path: clean + ".pub"), to: folder.appending(path: clean + ".pub"))
         return "~/.ssh/\(clean)"
     }
 

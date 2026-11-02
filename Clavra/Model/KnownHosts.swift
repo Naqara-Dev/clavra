@@ -9,6 +9,8 @@ enum KnownHosts {
         case unknown
         /// Clavra trusted a different key for this host before.
         case changed
+        /// Marked `@revoked` in a known_hosts file: never trusted, and never offered to trust.
+        case revoked
     }
 
     static let file = Library.folder.appending(path: "known_hosts")
@@ -20,6 +22,7 @@ enum KnownHosts {
 
     /// The same, against any two files; the tests use their own.
     static func check(host: String, port: Int, key: String, ours oursFile: URL, system systemFile: URL) -> Verdict {
+        if isRevoked(key, files: [oursFile, systemFile]) { return .revoked }
         let name = entryName(host, port)
         let ours = entries(in: oursFile).filter { $0.names.contains(name) }
         if ours.contains(where: { $0.key == key }) { return .trusted }
@@ -89,7 +92,27 @@ enum KnownHosts {
         let key: String
     }
 
-    /// Skips hashed (`|1|…`) and marker (`@revoked`, `@cert-authority`) lines.
+    /// Whether a known_hosts file marks `key` `@revoked`. Checked for every host, whatever host
+    /// pattern the line names: a key someone revoked shouldn't be trusted anywhere.
+    static func isRevoked(_ key: String) -> Bool {
+        isRevoked(key, files: [file, FileManager.default.homeDirectoryForCurrentUser.appending(path: ".ssh/known_hosts")])
+    }
+
+    static func isRevoked(_ key: String, files: [URL]) -> Bool {
+        let parts = key.split(separator: " ")
+        guard parts.count >= 2 else { return false }
+        let blob = parts[1]
+        return files.contains { url in
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+            return text.split(separator: "\n").contains { line in
+                let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+                return fields.count >= 4 && fields[0].lowercased() == "@revoked" && fields[3] == blob
+            }
+        }
+    }
+
+    /// Skips hashed (`|1|…`) and marker (`@revoked`, `@cert-authority`) lines; revoked keys are
+    /// read by `isRevoked`.
     private static func entries(in url: URL) -> [Entry] {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         return text.split(separator: "\n").compactMap { line in
