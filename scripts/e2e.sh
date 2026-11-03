@@ -14,7 +14,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-APP="$PWD/build/Build/Products/Debug/Clavra.app"
+# The real path (build may be a symlink to build.noindex), so stopping the app matches the process.
+APP="$(cd -P build && pwd)/Build/Products/Debug/Clavra.app"
 BIN="$APP/Contents/MacOS/Clavra"
 [ -x "$BIN" ] || { echo "Build the Debug app first (see the top of this script)."; exit 2; }
 for port in 2222 8765 18765 19876 11080 8790; do
