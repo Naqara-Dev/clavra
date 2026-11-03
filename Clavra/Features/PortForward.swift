@@ -165,18 +165,28 @@ final class LocalListener: Sendable {
         channel.close(promise: nil)
     }
 
-    /// Tries to bind the port for a moment.
+    /// Nothing else is listening on the port. An app on 127.0.0.1 or *:port answers a connection;
+    /// connections an earlier tunnel on this port closed (TIME_WAIT, for about 30 seconds) don't,
+    /// and mustn't count, or a tunnel that just carried traffic couldn't open again after a reconnect.
     static func isFree(_ port: Int) -> Bool {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { Darwin.close(fd) }
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(UInt16(port).bigEndian)
         address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        return withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }
-        }
+        let size = socklen_t(MemoryLayout<sockaddr_in>.size)
+        // Loopback answers at once: accepted, or refused.
+        let probe = socket(AF_INET, SOCK_STREAM, 0)
+        guard probe >= 0 else { return false }
+        let answered = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(probe, $0, size) == 0 } }
+        Darwin.close(probe)
+        if answered { return false }
+        // And it can be bound the way the listener binds it.
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+        var one: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+        return withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) == 0 } }
     }
 }
 

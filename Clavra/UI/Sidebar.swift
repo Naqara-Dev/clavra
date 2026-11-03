@@ -42,7 +42,7 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: 34)
+            WindowDragArea().frame(height: 34)
 
             // Find a host, or add one.
             HStack(spacing: 6) {
@@ -121,10 +121,12 @@ struct Sidebar: View {
 
             // The places that aren't hosts: one quiet row of icons.
             Rectangle().fill(Theme.line).frame(height: 1)
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 place("house", help: "Home: every host (⌘K)", page: .home)
                 place("text.insert", help: "Snippets", page: .snippets)
                 place("key", help: "Keys and identities", page: .keys)
+                place("play.rectangle", help: "Recordings", page: .recordings)
+                place("square.split.2x1", help: "Compare servers", page: .compare)
                 place("iphone", help: model.remote.isOn ? "Phone Access is on" : "Phone Access", page: .remote, dot: model.remote.isOn)
                 Spacer(minLength: 0)
                 SettingsLink {
@@ -147,7 +149,7 @@ struct Sidebar: View {
         let isOn = isShowing(page)
         return Button { model.show(page) } label: {
             Image(systemName: icon).font(.system(size: 13)).foregroundStyle(isOn ? Theme.ink : Theme.secondary)
-                .frame(width: 34, height: 30)
+                .frame(width: 30, height: 30)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(isOn ? Theme.card : .clear))
                 .overlay(alignment: .topTrailing) {
                     if dot { Circle().fill(Theme.color(for: .personal)).frame(width: 6, height: 6).padding(6) }

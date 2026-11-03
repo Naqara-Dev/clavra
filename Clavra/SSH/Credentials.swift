@@ -15,6 +15,8 @@ enum ClavraError: LocalizedError {
     case encryptedECDSA
     case wrongPassphrase
     case revokedHostKey
+    /// Something said in plain words where it happened.
+    case message(String)
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +30,7 @@ enum ClavraError: LocalizedError {
         case .notConnected: "This tab isn't connected right now."
         case .wrongPassphrase: "The saved passphrase doesn't open this key. Check it in the host's settings."
         case .encryptedECDSA: "Clavra can't open passphrase-protected ECDSA keys yet. Use an ed25519 key, or one without a passphrase."
+        case .message(let text): text
         }
     }
 }

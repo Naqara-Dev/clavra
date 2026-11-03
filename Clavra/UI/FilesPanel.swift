@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 /// ~/Downloads.
 struct FilesPanel: View {
     var session: Session
+    /// Follow a file in the Logs panel.
+    var followLog: (String) -> Void = { _ in }
     @State private var renaming: FileBrowser.Entry?
     @State private var deleting: FileBrowser.Entry?
     @State private var newFolder = false
@@ -124,6 +126,7 @@ struct FilesPanel: View {
                                 Button("Download Folder") { browser.download(entry) }
                             } else {
                                 Button("Edit on This Mac") { browser.edit(entry) }
+                                Button("Follow in Logs") { followLog(browser.join(entry.name)) }
                                 Button("Download") { browser.download(entry) }
                             }
                             Button("Copy Path") {

@@ -186,3 +186,28 @@ struct HoverCard<Content: View>: View {
         .animation(.easeOut(duration: 0.15), value: hovering)
     }
 }
+
+/// Where the title bar would be: dragging moves the window, and a double-click zooms it (or
+/// minimizes it, whichever System Settings › Desktop & Dock says), as on any Mac window. Sits
+/// behind the tab strip and the tops of pages, so the controls there still get their clicks.
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            if event.clickCount == 2 {
+                switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+                case "Minimize": window.performMiniaturize(nil)
+                case "None": break
+                default: window.performZoom(nil)
+                }
+            } else {
+                window.performDrag(with: event)
+            }
+        }
+    }
+}

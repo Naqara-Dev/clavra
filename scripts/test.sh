@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
-SOURCES=(Clavra/Features/CommandGuard.swift Clavra/Features/SafeNames.swift Clavra/Features/Autosuggest.swift
+SOURCES=(Clavra/Features/CommandGuard.swift Clavra/Features/BlastRadius.swift Clavra/Features/SudoFill.swift Clavra/Features/ServerDiff.swift Clavra/Features/Runbook.swift Clavra/Features/LogLevel.swift Clavra/Features/Recording.swift Clavra/Features/HealthMonitor.swift Clavra/Features/SafeNames.swift Clavra/Features/Autosuggest.swift
          Clavra/Features/ServerStats.swift Clavra/Features/Panes.swift Clavra/Model/Server.swift
          Clavra/Model/HostStore.swift Clavra/Model/Labels.swift Clavra/Model/KnownHosts.swift Clavra/Model/Keychain.swift)
 swiftc -swift-version 6 -parse-as-library -O -o "$OUT/core-tests" "${SOURCES[@]}" Tests/CoreTests.swift

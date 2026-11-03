@@ -40,7 +40,17 @@ Most SSH clients treat every server the same. Clavra knows the one that pays you
 | | |
 |---|---|
 | **Production guard** | Holds back commands that are hard to take back, on production hosts or any host you turn it on for. Nothing reaches the server until you say so. |
-| **Split panes** | ⌘D beside, ⇧⌘D below, ⌥⌘ arrows to move, dividers you can drag, the way you know from iTerm. Type into every pane in a tab at once with ⌥⌘I. |
+| **What it would touch** | The held command is checked on the server first with a look-alike that only reads: "Deletes 1,243 files and folders, 3.2 GB", which units depend on the service you're stopping, the containers `docker compose down` takes with it, who's signed in before a reboot. |
+| **Undo for rm -rf** | "Back Up, Then Run" archives what `rm` or a recursive `chmod`/`chown` would touch into `~/.clavra-backups` on the server first (up to 500 MB, after checking there's room). Changed your mind? Backups in the status line puts it all back. |
+| **Down, and back** | Production hosts are checked every minute; two misses in a row and you get a notification, and another when it answers again. Quiet while your own Mac is offline. |
+| **A phone's yes** | Turn on "Only a phone can say yes" for a host, and its risky commands run only once a phone connected through Phone Access approves them. |
+| **sudo with Touch ID** | When sudo asks for a password, Clavra fills it from the Keychain after Touch ID. It's never typed, so it never lands in the scrollback or the history. |
+| **Keep sessions alive** | Each tab runs inside tmux on the server, set up for you: Wi-Fi drops, sleep or quitting Clavra don't stop what's running, and reconnecting lands you where you were. Closing the tab cleans it up. |
+| **Recordings** | Tabs written down as asciinema `.cast` files, every command a marker on the timeline: scrub back to what happened, search by command, jump straight to it. Kept on this Mac only. |
+| **Compare servers** | Two hosts side by side: packages, running services, listening ports, a config file, or a whole folder by checksum. |
+| **Logs and runbooks** | Follow a log file, the journal or a container beside the terminal, errors standing out. Keep a Markdown runbook per host whose commands run with a click. |
+| **Done, while you were away** | A command that ran 20 seconds or more ends with a notification when you're in another tab or app. |
+| **Split panes** | ⌘D beside, ⇧⌘D below, ⌥⌘ arrows to move, even splits with dividers you can drag (double-click to even them out), and panes you drag onto another's edge to rearrange, the way you know from iTerm. Type into every pane in a tab at once with ⌥⌘I. |
 | **Suggestions** | Commands you ran on that host appear in grey after the cursor; → takes them. Anything that looks like it holds a password is never kept, and production keeps nothing on disk. |
 | **Files** | SFTP beside the terminal: whole folders both ways, drag and drop, permissions, and editing in any Mac app with each save going back up. Uploads land under a temporary name first, so a dropped connection never leaves half a file. |
 | **Tunnels** | Local, remote and SOCKS (`ssh -L`, `-R`, `-D`). The ports the server listens on are offered one click away; tunnels saved with a host open on every connect. A Mac port that's already taken, or a server that can't reach the target, is named on the side it happens. |

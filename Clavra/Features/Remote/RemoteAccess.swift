@@ -425,6 +425,15 @@ final class RemoteAccess {
             }
             guard canType(in: session) else { return link.send(["t": "readonly"], key: key) }
             session.receiveRemote(text)
+        case "approve":
+            // A yes or no to a held command, from any tab: the phone names the command it saw, so
+            // an answer never lands on a different one that took its place.
+            // Only for hosts that ask a phone: elsewhere a held command waits for the Mac, and a
+            // view-only tab stays view-only.
+            guard link.allowed, let raw = message["session"] as? String, let id = UUID(uuidString: raw),
+                  let session = model?.session(id), session.needsPhoneApproval, let command = message["command"] as? String,
+                  session.held?.command == command else { return sendSessions(to: link) }
+            session.release(run: message["run"] as? Bool == true, fromPhone: true)
         default:
             break
         }
@@ -458,7 +467,7 @@ final class RemoteAccess {
 
     /// What a phone's tab list shows; when it changes, the list is sent again.
     private func signature() -> String {
-        (model?.sessions ?? []).map { "\($0.id)|\($0.title)|\($0.isLive)|\($0.held?.command ?? "")|\(canType(in: $0))" }.joined(separator: "\n")
+        (model?.sessions ?? []).map { "\($0.id)|\($0.title)|\($0.isLive)|\($0.held?.command ?? "")|\(canType(in: $0))|\($0.impact?.lines ?? [])" }.joined(separator: "\n")
             + (model?.store.hosts ?? []).map { "\($0.id)|\($0.title)" }.joined()
     }
 
@@ -484,7 +493,8 @@ final class RemoteAccess {
         let list: [[String: Any]] = model.sessions.map { session in
             ["id": session.id.uuidString, "title": session.title, "host": session.server.target,
              "place": LabelStore.shared.resolve(session.server.place).rawValue, "placeName": session.server.place.label, "live": session.isLive, "typing": canType(in: session),
-             "held": session.held?.command ?? ""]
+             "held": session.held?.command ?? "", "approve": session.held != nil && session.needsPhoneApproval,
+             "reason": session.held?.reason ?? "", "impact": session.impact?.lines ?? []]
         }
         let hosts: [[String: Any]] = model.store.hosts
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -526,7 +536,8 @@ final class RemoteAccess {
         let cursor = term.getCursorLocation()
         link.send(["t": "screen", "session": session.id.uuidString, "cols": term.cols, "start": start, "end": end,
                    "rows": changed, "cursor": [cursor.x, top + cursor.y], "full": full,
-                   "held": session.held?.command ?? "", "typing": canType(in: session)], key: key)
+                   "held": session.held?.command ?? "", "approve": session.held != nil && session.needsPhoneApproval,
+                   "typing": canType(in: session)], key: key)
     }
 
     // MARK: Helpers

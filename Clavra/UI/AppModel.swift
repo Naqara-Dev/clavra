@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor @Observable
 final class AppModel {
     enum Page: Hashable {
-        case home, keys, snippets, remote
+        case home, keys, snippets, remote, recordings, compare
     }
 
     let store = HostStore()
@@ -13,6 +13,7 @@ final class AppModel {
     let identities = IdentityStore()
     let health = HealthMonitor()
     let remote = RemoteAccess()
+    let runbooks = RunbookStore()
     /// Every open terminal, in every tab and pane.
     private(set) var sessions: [Session] = []
     private(set) var tabs: [TabGroup] = [] {
@@ -43,7 +44,7 @@ final class AppModel {
     var sidePanel: SidePanel?
 
     enum SidePanel: Hashable {
-        case files, ports
+        case files, ports, runbook, logs
     }
 
     init() {
@@ -52,6 +53,12 @@ final class AppModel {
         try? FileManager.default.removeItem(at: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appending(path: "Clavra/Editing"))
         health.watch { [weak self] in self?.store.hosts ?? [] }
+        health.onChange = { change in FinishedNotice.shared.alert(change) }
+        FinishedNotice.shared.reveal = { [weak self] id in
+            guard let self, let session = self.session(id) else { return }
+            self.focus(session)
+        }
+        Task.detached(priority: .background) { Recordings.prune() }
         remote.model = self
         // With iCloud Drive, pick up what other Macs changed every half minute while open.
         Task { [weak self] in
@@ -98,6 +105,16 @@ final class AppModel {
         remote.sessionsChanged()
     }
 
+    /// A pane dragged onto an edge of another in the same tab moves there and takes the keyboard.
+    func movePane(_ id: Session.ID, to target: Session.ID, edge: PaneNode.Edge) {
+        guard let tab = tab(containing: id), tab.paneIDs.contains(target),
+              let moved = tab.root.moving(id, to: target, edge: edge) else { return }
+        tab.root = moved
+        tab.focused = id
+        session(id)?.refocus()
+        rememberTabs()
+    }
+
     /// ⌥⌘ arrows: the next or previous pane.
     func focusPane(_ step: Int) {
         guard let tab = currentTab, let next = tab.neighbor(step), let session = session(next) else { return }
@@ -127,6 +144,20 @@ final class AppModel {
     private func start(_ server: Server, through jump: Server?) -> Session {
         let session = Session(server: server, jump: jump)
         session.isSavedHost = isSaved(server)
+        // The lowest number no other tab on this host has: a kept-alive tab finds its tmux session again.
+        session.slot = (1...).first { n in !sessions.contains { $0.server.id == server.id && $0.slot == n } } ?? 1
+        session.onFinished = { [weak self, weak session] command, took in
+            guard let self, let session else { return }
+            #if DEBUG
+            print("CLAVRA_FINISHED \(Int(took))s active=\(NSApp.isActive) \(command)"); fflush(stdout)
+            #endif
+            // Only when you'd otherwise miss it: another tab is in front, or another app is.
+            guard !NSApp.isActive || self.current?.id != session.id else { return }
+            session.wantsAttention = true
+            // A command that looks like it holds a secret is named by its program only.
+            let shown = CommandHistory.looksSecret(command) ? (command.split(separator: " ").first.map { "\($0) …" } ?? "A command") : command
+            FinishedNotice.shared.post(host: session.server.title, command: shown, took: took, session: session.id)
+        }
         session.mirror = { [weak self, weak session] bytes in
             guard let self, self.broadcasting, let session, session.id == self.current?.id,
                   let tab = self.tab(containing: session.id) else { return }
@@ -380,5 +411,6 @@ final class AppModel {
         store.reload()
         snippets.reload()
         identities.reload()
+        runbooks.reload()
     }
 }

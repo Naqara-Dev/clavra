@@ -30,7 +30,7 @@ enum CommandGuard {
         (#"\bpkill\b"#, "Kills processes by name"),
         (#"\bdocker\s+(rm|rmi|kill|stop)\b"#, "Removes or stops containers"),
         (#"\bdocker\s+(system|container|volume|image|network)\s+(prune|rm)\b"#, "Removes Docker data"),
-        (#"\bdocker[\s-]compose\s+(down|rm|kill|stop)\b"#, "Takes containers down"),
+        (#"\bdocker[\s-]compose\b[^;&|]*\s(down|rm|kill|stop)\b"#, "Takes containers down"),
         (#"\bkubectl\s+(delete|drain|scale)\b"#, "Changes what's running in the cluster"),
         (#"\bterraform\s+(destroy|apply)\b"#, "Changes real infrastructure"),
         (#"\bgit\s+push\b.*(\s--force\b|\s-f\b|\s--force-with-lease\b)"#, "Rewrites history on the remote"),

@@ -45,7 +45,23 @@
     padding: 0 12px 0 9px; border-radius: 17px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
     font: 500 13px -apple-system, system-ui, sans-serif; }
   header #new svg { display: block; margin: auto; }
-  #picker { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; z-index: 5; }
+  #picker, #approve { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; z-index: 5; }
+  #approve { z-index: 6; }
+  #approve h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  #approve .tag { display: inline-flex; align-items: center; gap: 6px; color: var(--coral); font-size: 12.5px; font-weight: 500; margin-bottom: 8px; }
+  #approve .tag::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--coral); }
+  #approve-command { margin: 12px 0 8px; padding: 10px 12px; border-radius: 10px; background: var(--field); border: 1px solid var(--line);
+    font: 13px ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+  #approve-reason { margin: 0; color: var(--secondary); font-size: 14px; line-height: 1.45; }
+  #approve-impact { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(226,133,122,.07);
+    border: 1px solid rgba(226,133,122,.2); font-size: 13.5px; line-height: 1.45; color: var(--secondary); }
+  #approve-impact b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+  #approve-impact span { display: block; font: 12px ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .choices { display: flex; gap: 10px; margin-top: 16px; }
+  .choices button { flex: 1; height: 48px; border-radius: 12px; font: 600 16px -apple-system, system-ui, sans-serif; border: 1px solid var(--line); }
+  #approve-no { background: var(--brass); color: #1d1810; border-color: transparent; }
+  #approve-yes { background: var(--card); color: var(--coral); border-color: rgba(226,133,122,.45); }
+  #note.ask { cursor: pointer; }
   .sheet { width: 100%; max-height: 80%; overflow: auto; background: var(--window); border-top: 1px solid var(--line);
     border-radius: 16px 16px 0 0; padding: 14px 14px max(18px, env(safe-area-inset-bottom)); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; }
@@ -147,6 +163,19 @@
       </div>
       <p class="sheet-note">Opens a new tab on your Mac, signed in with what Clavra saved there.</p>
       <div id="host-list"></div>
+    </div>
+  </div>
+  <div id="approve" hidden>
+    <div class="sheet" role="dialog" aria-labelledby="approve-title">
+      <div class="tag" id="approve-host"></div>
+      <h2 id="approve-title">Run this?</h2>
+      <div id="approve-command"></div>
+      <p id="approve-reason"></p>
+      <div id="approve-impact" hidden></div>
+      <div class="choices">
+        <button id="approve-no" type="button">Don't Run</button>
+        <button id="approve-yes" type="button">Run It</button>
+      </div>
     </div>
   </div>
   <script src="aead.js"></script>

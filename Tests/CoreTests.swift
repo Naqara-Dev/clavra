@@ -25,6 +25,10 @@ enum CoreTests {
         sshConfig()
         places()
         knownHosts()
+        blastRadius()
+        sudoPrompts()
+        newFeatures()
+        downAlerts()
         print(failures == 0 ? "✓ \(passes) checks passed" : "\(failures) of \(passes + failures) checks failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -33,7 +37,7 @@ enum CoreTests {
         let risky = ["rm -rf /var/www", "sudo rm -fr build", "rm -r old", "DROP TABLE users;", "drop database app",
                      "TRUNCATE orders", "DELETE FROM users;", "update users set admin=1", "sudo reboot", "reboot",
                      "apt upgrade && reboot", "shutdown -h now", "docker rm web", "docker system prune -af",
-                     "docker compose down", "git push --force origin main", "git push -f", "git reset --hard HEAD~3",
+                     "docker compose down", "docker compose -f prod.yml -p shop down", "git push --force origin main", "git push -f", "git reset --hard HEAD~3",
                      "chmod -R 777 /", "kubectl delete pod x", "terraform destroy", "systemctl restart nginx",
                      "kill -9 1234", "mkfs.ext4 /dev/sdb", "dd if=x of=/dev/sda", "crontab -r", "redis-cli FLUSHALL",
                      "apt remove nginx", "ufw disable", "iptables -F",
@@ -141,6 +145,13 @@ enum CoreTests {
         check(tree.ids == [a, b, c, d], "order is left to right, top to bottom")
         check(tree.removing(d) == .split(.sideBySide, [.leaf(a), .leaf(b), .leaf(c)]), "a split of one collapses")
         check(PaneNode.leaf(a).removing(a) == nil, "the last pane leaves nothing")
+        // Dragging a pane onto another one's edge, as in iTerm.
+        let row = PaneNode.split(.sideBySide, [.leaf(a), .leaf(b), .leaf(c)])
+        check(row.moving(c, to: a, edge: .left) == .split(.sideBySide, [.leaf(c), .leaf(a), .leaf(b)]), "moved to the left of the first")
+        check(row.moving(a, to: b, edge: .bottom) == .split(.sideBySide, [.split(.stacked, [.leaf(b), .leaf(a)]), .leaf(c)]), "moved under another")
+        check(row.moving(a, to: b, edge: .left) == nil, "already there: no change")
+        check(row.moving(a, to: a, edge: .right) == nil, "onto itself: no change")
+        check(row.moving(d, to: a, edge: .right) == nil, "a pane from elsewhere isn't moved")
     }
 
     static func servers() {
@@ -277,5 +288,208 @@ enum CoreTests {
         check(verdict("other.example.com", 22, bad) == .revoked, "@revoked keys are refused, not offered as new")
         check(verdict("web.example.com", 22, good) == .trusted, "other keys are unaffected")
         check(KnownHosts.fingerprint("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl").hasPrefix("SHA256:"), "fingerprint")
+    }
+
+    static func blastRadius() {
+        func probe(_ line: String, folder: String? = "/tmp") -> BlastRadius.Probe? {
+            if case .probe(let probe) = BlastRadius.plan(for: line, folder: folder) { return probe }
+            return nil
+        }
+        // Words: quotes kept as values, anything the look-alike can't repeat refused.
+        check(BlastRadius.words("rm -rf 'my dir' \"x y\" a\\ b")?.map(\.text) == ["rm", "-rf", "my dir", "x y", "a b"], "words")
+        for unsafe in ["rm -rf $DIR", "rm -rf `pwd`/x", "rm -rf $(ls)", "rm -rf x > y", "rm -rf a | b", "rm -rf \"$HOME\"", "rm -rf x &"] {
+            check(BlastRadius.words(unsafe) == nil, "no look-alike for: \(unsafe)")
+        }
+        check(BlastRadius.segments("cd /srv && rm -rf build; ls || true") == ["cd /srv", "rm -rf build", "ls", "true"], "segments")
+        check(BlastRadius.segments("echo 'a && b'") == ["echo 'a && b'"], "quoted && isn't a split")
+        // Which commands get a look-alike, and of what kind.
+        check(probe("sudo rm -rf /var/www/old")?.kind == .delete && probe("sudo rm -rf /var/www/old")?.withoutSudo == true, "rm, under sudo")
+        check(probe("find . -name '*.log' -delete")?.kind == .matches, "find -delete")
+        check(probe("find . -type f -exec rm {} \\;")?.command.contains("-exec") == false, "find -exec is dropped")
+        check(probe("systemctl restart nginx")?.kind == .services, "systemctl")
+        check(probe("docker compose -f prod.yml down")?.command.contains("ps -a") == true, "compose down lists its containers")
+        check(probe("kubectl delete pod -l app=web --grace-period=0")?.command.contains("get pod -l app=web -o name") == true, "kubectl delete is a get")
+        check(probe("apt remove nginx")?.command.contains("apt-get -s remove nginx") == true, "apt remove is simulated")
+        check(probe("git clean -fdx")?.command.contains("git clean -n -dx") == true, "git clean -n")
+        check(probe("sudo reboot")?.kind == .reboot, "reboot")
+        check(probe("ls -la") == nil && probe("rm -rf $X") == nil, "nothing to preview, or nothing safe")
+        if case .needsFolder = BlastRadius.plan(for: "rm -rf build", folder: nil) {} else { check(false, "relative paths need the folder") }
+        check(probe("rm -rf /srv/build", folder: nil) != nil, "absolute paths don't need the folder")
+        check(probe("cd /srv/app && rm -rf build", folder: nil)?.command.contains(#"cd '"'"'/srv/app'"'"'"#) == true, "a cd before it sets the folder")
+        // Prompts that say where the shell is.
+        check(BlastRadius.folder(fromPrompt: "deploy@web-1:~/app$ rm -rf x") == "~/app", "folder from a bash prompt")
+        check(BlastRadius.folder(fromPrompt: "root@db:/var/lib# ls") == "/var/lib", "folder from a root prompt")
+        check(BlastRadius.folder(fromPrompt: "➜  app git:(main) rm -rf x") == nil, "no folder in an oh-my-zsh prompt")
+        let me = BlastRadius.identity(fromPrompt: "deploy@web-1:~/app$ rm -rf x")
+        check(me?.user == "deploy" && me?.host == "web-1" && me?.root == false, "who and where from a prompt")
+        check(BlastRadius.identity(fromPrompt: "root@db:/var/lib# ls")?.root == true, "a root prompt")
+        check(BlastRadius.identity(fromPrompt: "(venv) deploy@web-1:~$ ls")?.user == "deploy", "a prompt after a virtualenv")
+        check(BlastRadius.identity(fromPrompt: "➜  app ls") == nil, "no identity in an oh-my-zsh prompt")
+
+        // The look-alike really runs, counts what's there, and touches nothing.
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "clavra-blast-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder.appending(path: "build/sub"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for name in ["build/a.o", "build/b.o", "build/sub/c.o", "it's.log"] {
+            try? Data(count: 2048).write(to: folder.appending(path: name))
+        }
+        func run(_ line: String) -> [String]? {
+            guard let probe = probe(line, folder: folder.path) else { return nil }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", probe.command]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            try? process.run()
+            process.waitUntilExit()
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            return BlastRadius.describe(output, kind: probe.kind, withoutSudo: probe.withoutSudo)
+        }
+        let deleted = run("rm -rf build")
+        check(deleted?.first?.hasPrefix("Deletes 5 files and folders") == true, "counts what rm -rf would delete: \(deleted ?? [])")
+        check(FileManager.default.fileExists(atPath: folder.appending(path: "build/sub/c.o").path), "…and deletes nothing")
+        check(run("rm -rf missing-*")?.first?.hasPrefix("Nothing by those names") == true, "a glob that matches nothing")
+        check(run("rm -f \"it's.log\"")?.first?.hasPrefix("Deletes 1 file or folder") == true, "quotes in names")
+        check(run("find . -name '*.o' -delete")?.first == "Matches 3 files.", "find -delete counts matches")
+        check(FileManager.default.fileExists(atPath: folder.appending(path: "build/a.o").path), "…and deletes nothing")
+        check(BlastRadius.describe("unit=nginx.service active 2\n", kind: .services, withoutSudo: false) == ["nginx.service is running; 2 units depend on it."], "services")
+
+        // Names that look like find's actions stay names: nothing is deleted before a yes.
+        try? Data(count: 10).write(to: folder.appending(path: "-delete"))
+        _ = run("rm -rf -- -delete")
+        _ = run("rm -rf '-delete'")
+        _ = run("rm -rf *")
+        _ = run("chmod -R 755 -- -delete")
+        let left = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        check(Set(left) == ["build", "it's.log", "-delete"], "no probe deletes anything: \(left)")
+        check(FileManager.default.fileExists(atPath: folder.appending(path: "build/sub/c.o").path), "…inside folders either")
+        check(run("rm -rf -- -delete")?.first?.hasPrefix("Deletes 1 file or folder") == true, "a file called -delete is counted as a file")
+        // Backing up first, then putting it back.
+        let backups = folder.appending(path: "backups")
+        func shell(_ command: String) -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", command]
+            process.environment = ProcessInfo.processInfo.environment.merging(["CLAVRA_BACKUPS": backups.path]) { $1 }
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            try? process.run()
+            process.waitUntilExit()
+            return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        }
+        check(probe("sudo rm -rf build", folder: folder.path)?.backup == nil, "no backup under sudo: it couldn't read everything")
+        check(probe("rm -rf $X", folder: folder.path)?.backup == nil && probe("kill -9 1")?.backup == nil, "backups only for rm and chmod -R")
+        if let plan = probe("rm -rf build \"it's.log\" missing", folder: folder.path)?.backup,
+           case .made(let file, let bytes) = BlastRadius.readBackup(shell(plan)) {
+            check(bytes > 0 && file.contains("/backups/clavra-") && !file.contains("/../") && FileManager.default.fileExists(atPath: file), "the backup is made where it should be: \(file)")
+            try? FileManager.default.removeItem(at: folder.appending(path: "build"))
+            try? FileManager.default.removeItem(at: folder.appending(path: "it's.log"))
+            let restored = shell(BlastRadius.restore(file))
+            check(restored.contains("restored=0"), "restore says it worked: \(restored)")
+            check(FileManager.default.fileExists(atPath: folder.appending(path: "build/sub/c.o").path)
+                  && FileManager.default.fileExists(atPath: folder.appending(path: "it's.log").path), "…and the files are back")
+            check(BlastRadius.readBackup(shell(BlastRadius.restore(file + ".gone"))) == .skipped("The server didn't say whether the backup worked.")
+                  && shell(BlastRadius.restore(file + ".gone")).contains("missing=1"), "a backup that's gone says so")
+        } else {
+            check(false, "a backup is made for rm -rf")
+        }
+        check(BlastRadius.readBackup("nospace=1\n") != BlastRadius.readBackup("toobig=1\n"), "why a backup was skipped")
+        // What the second review found.
+        check(probe("rm -rf src/{a,b} build") == nil, "brace expansion: no look-alike")
+        check(probe("rm -rf src/**/cache") == nil, "** : no look-alike")
+        check(probe("rm -rf a && rm -rf b")?.backup == nil && probe("rm -rf a && rm -rf b")?.more == true, "two risky parts: shown as such, no backup")
+        check(probe("chown -R www /srv")?.backup == nil, "no backup for chown: the owner couldn't be put back")
+        check(probe("rm -rf ..")?.backup == nil && probe("rm -rf .")?.backup == nil, "no backup of . or ..")
+        if let plan = probe("rm -rf ../../\(folder.lastPathComponent)/build", folder: folder.appending(path: "build").path)?.backup,
+           case .made(let file, _) = BlastRadius.readBackup(shell(plan)) {
+            let listing = shell("tar -tzf '\(file)' | head -n 1")
+            check(listing.hasSuffix("/\(folder.lastPathComponent)/build/\n") && !listing.contains(".."), "`..` resolved to where it really is: \(listing)")
+        } else {
+            let plan = probe("rm -rf ../../\(folder.lastPathComponent)/build", folder: folder.appending(path: "build").path)?.backup
+            check(false, "a backup through ..: \(plan == nil ? "no plan" : shell(plan!))")
+        }
+        if let plan = probe("rm -rf \(backups.deletingLastPathComponent().path)", folder: "/")?.backup {
+            check(BlastRadius.readBackup(shell(plan)) == .skipped("It would remove the backups folder itself, so there's nowhere safe to keep a backup."),
+                  "no backup when the command would remove the backups folder")
+        } else {
+            check(false, "a backup plan for the parent of the backups folder")
+        }
+
+        // No look-alike when it would do more than read.
+        check(probe("find . -name '*.tmp' -fprint gone.txt -delete") == nil, "find that writes files")
+        check(probe("find * -delete") == nil, "find with a bare glob")
+        check(probe("docker compose run --rm app ./manage.sh stop") == nil, "compose run isn't a global option")
+        check(probe("docker compose exec web rm -rf /app/tmp") == nil, "compose exec isn't either")
+        check(probe("docker compose -f prod.yml -p shop down") != nil, "real global options still work")
+        check(probe("redis-cli del sessions flushall") == nil, "redis commands before FLUSHALL")
+        check(probe("redis-cli -h db -p 6380 flushall") != nil, "connection options before FLUSHALL")
+        check(probe("rm -rf /srv/x")?.command.contains("timeout 8") == true, "the whole look-alike has a time limit")
+        if case .needsFolder = BlastRadius.plan(for: #"cd "$DIR" && rm -rf build"#, folder: "/tmp") {} else { check(false, "an unreadable cd forgets the folder") }
+        if case .needsFolder = BlastRadius.plan(for: "pushd /x && rm -rf build", folder: "/tmp") {} else { check(false, "pushd forgets the folder") }
+    }
+
+    static func sudoPrompts() {
+        check(SudoFill.isPrompt("[sudo] password for deploy: ", after: nil), "Debian and Ubuntu's sudo prompt")
+        check(SudoFill.isPrompt("[sudo: authenticate] Password:", after: nil), "newer sudo's prompt")
+        check(SudoFill.isPrompt("Password:", after: "sudo systemctl restart nginx"), "a bare Password: after sudo")
+        check(!SudoFill.isPrompt("Password:", after: "su -"), "su's Password: is left alone")
+        check(!SudoFill.isPrompt("Password:", after: "mysql -u root -p"), "a program's own prompt is left alone")
+        check(!SudoFill.isPrompt("deploy@web:~$ sudo ls", after: nil), "a command line isn't a prompt")
+        check(!SudoFill.isPrompt("[sudo] password for deploy: hunter2", after: nil), "only while it's still waiting")
+    }
+
+    static func newFeatures() {
+        // Runbooks: headings, steps, code fences and $ lines.
+        let blocks = RunbookBlock.parse("# Deploy\n\n- [ ] Tell the team\n- [x] Pull\n```\ngit pull\nmake\n```\n$ sudo systemctl restart app\nSome words\nmore words")
+        check(blocks.count == 6, "runbook blocks: \(blocks.count)")
+        check(blocks.first == .heading("Deploy", level: 1, line: 0), "heading")
+        check(blocks.contains(.step("Pull", done: true, line: 3)), "a ticked step")
+        check(blocks.contains(.code("git pull\nmake", line: 4)), "a fenced command")
+        check(blocks.contains(.code("sudo systemctl restart app", line: 8)), "a $ line")
+        check(blocks.last == .text("Some words more words", line: 9), "a paragraph")
+
+        // Comparing: by name for lists, line by line for files.
+        let packages = ServerDiff.rows("curl 8.5\nnginx 1.24\nvim 9.1\n", "curl 8.5\nnginx 1.26\nzsh 5.9\n", subject: .packages)
+        check(packages.map(\.kind) == [.same, .changed, .onlyLeft, .onlyRight], "packages compared by name")
+        let file = ServerDiff.rows("a\nb\nc\n", "a\nB\nc\nd\n", subject: .file)
+        check(file.map(\.kind) == [.same, .changed, .same, .onlyRight], "files lined up like diff")
+        check(ServerDiff.command(for: .command, input: "rm -rf /tmp/x") == nil, "compare won't run a risky command")
+        check(ServerDiff.command(for: .file, input: "/etc/it's.conf")?.contains("it") == true, "file paths are quoted")
+
+        // Log levels.
+        check(LogLevel.of("2024/01/01 [error] 123#0: upstream timed out") == .error, "nginx error")
+        check(LogLevel.of("level=warn msg=slow") == .warning, "logfmt warning")
+        check(LogLevel.of("1.2.3.4 - - \"GET / HTTP/1.1\" 502 0") == .error, "a 5xx in an access log")
+        check(LogLevel.of("GET /health 200") == .info, "a plain line")
+        check(LogLevel.clean("\u{1b}[31mred\u{1b}[0m\r") == "red", "colour codes go")
+
+        // Recordings: whole UTF-8 characters only, and a file that reads back.
+        let snowman = Array("a☃".utf8)
+        check(SessionRecorder.completeLength(Array(snowman.prefix(3))) == 1, "a cut character waits for the rest")
+        check(SessionRecorder.completeLength(snowman) == 4, "a whole character goes")
+        let cast = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "clavra-\(UUID().uuidString).cast")
+        defer { try? FileManager.default.removeItem(at: cast) }
+        let text = #"{"version":2,"width":80,"height":24,"timestamp":1700000000,"title":"web · deploy@web","clavra":{"host":"web"}}"#
+            + "\n" + #"[0.5,"o","$ "]"# + "\n" + #"[1.25,"m","ls -la"]"# + "\n" + #"[1.3,"r","100x30"]"# + "\n" + #"[2.75,"o","total 0\r\n"]"# + "\n"
+        try? text.write(to: cast, atomically: true, encoding: .utf8)
+        let info = Recordings.info(at: cast)
+        check(info?.host == "web" && info?.duration == 2.75 && info?.commands == [Recordings.Marker(time: 1.25, text: "ls -la")], "recording info")
+        let tape = Recordings.tape(at: cast)
+        check(tape?.cols == 80 && tape?.events.count == 3 && tape?.duration == 2.75, "recording tape")
+    }
+
+    static func downAlerts() {
+        var tracker = DownTracker<String>()
+        let t0 = Date(timeIntervalSince1970: 0)
+        check(tracker.record("never-up", up: false, at: t0) == nil && tracker.record("never-up", up: false, at: t0) == nil,
+              "a host never seen up is never called down")
+        check(tracker.record("web", up: true, at: t0) == nil, "up is quiet")
+        check(tracker.record("web", up: false, at: t0) == nil, "one miss is a blip")
+        check(tracker.record("web", up: true, at: t0) == nil, "…and answering again after a blip is quiet")
+        check(tracker.record("web", up: false, at: t0) == nil, "a new first miss")
+        check(tracker.record("web", up: false, at: t0.addingTimeInterval(60)) == .wentDown, "two misses in a row is down")
+        check(tracker.record("web", up: false, at: t0.addingTimeInterval(120)) == nil, "down is said once")
+        check(tracker.record("web", up: true, at: t0.addingTimeInterval(360)) == .cameBack(after: 300), "back, with how long it was down")
+        check(tracker.record("web", up: true, at: t0.addingTimeInterval(420)) == nil, "back is said once")
     }
 }

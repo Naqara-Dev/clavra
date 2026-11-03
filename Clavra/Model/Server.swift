@@ -49,6 +49,11 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
     var forwards: [Forward] = []
     /// Ask before risky commands. Nil follows the place: on for production, off elsewhere.
     var guardOverride: Bool?
+    /// Risky commands on this host run only once a phone (through Phone Access) approves them.
+    var phoneApproval = false
+    /// Each tab runs inside tmux on the server, so a dropped connection, sleep or quitting Clavra
+    /// doesn't end what's running; reconnecting picks it up where it was.
+    var keepsAlive = false
     /// A saved identity to sign in as; when set, it supplies the user, key and password.
     var identity: UUID?
     /// Words to find and group hosts by: "nginx", "client-a", "db".
@@ -222,7 +227,7 @@ struct Server: Identifiable, Codable, Hashable, Sendable {
 
 extension Server {
     private enum CodingKeys: String, CodingKey {
-        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride, startup, notes, identity, tags
+        case id, name, address, port, user, auth, keyPath, place, lastConnected, jump, forwards, guardOverride, startup, notes, identity, tags, phoneApproval, keepsAlive
     }
 
     /// Every field but the address is optional on disk, so files from older versions (or written by
@@ -245,6 +250,8 @@ extension Server {
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         identity = try c.decodeIfPresent(UUID.self, forKey: .identity)
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        phoneApproval = try c.decodeIfPresent(Bool.self, forKey: .phoneApproval) ?? false
+        keepsAlive = try c.decodeIfPresent(Bool.self, forKey: .keepsAlive) ?? false
     }
 
     /// A copy with a new identity, for "Duplicate".

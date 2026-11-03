@@ -54,6 +54,10 @@ struct ClavraApp: App {
                     .keyboardShortcut("f", modifiers: [.command, .shift]).disabled(model.current?.isLive != true)
                 Button("Ports") { model.sidePanel = model.sidePanel == .ports ? nil : .ports }
                     .keyboardShortcut("p", modifiers: [.command, .shift]).disabled(model.current?.isLive != true)
+                Button("Logs") { model.sidePanel = model.sidePanel == .logs ? nil : .logs }
+                    .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(model.current?.isLive != true)
+                Button("Runbook") { model.sidePanel = model.sidePanel == .runbook ? nil : .runbook }
+                    .keyboardShortcut("b", modifiers: [.command, .shift]).disabled(model.current == nil)
                 Divider()
                 Button("Reconnect") { model.current?.connect() }
                     .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.current == nil || model.current?.isLive == true)
@@ -83,6 +87,8 @@ struct ClavraApp: App {
                 Button("Keys") { model.show(.keys) }.keyboardShortcut("1", modifiers: [.command, .option])
                 Button("Snippets") { model.show(.snippets) }.keyboardShortcut("2", modifiers: [.command, .option])
                 Button("Remote Access") { model.show(.remote) }.keyboardShortcut("3", modifiers: [.command, .option])
+                Button("Recordings") { model.show(.recordings) }.keyboardShortcut("4", modifiers: [.command, .option])
+                Button("Compare Servers") { model.show(.compare) }.keyboardShortcut("5", modifiers: [.command, .option])
             }
         }
 
@@ -112,10 +118,16 @@ struct RootView: View {
                     case .keys: KeysView(model: model)
                     case .snippets: SnippetsView(model: model)
                     case .remote: RemoteView(model: model)
+                    case .recordings: RecordingsView(model: model)
+                    case .compare: CompareView(model: model)
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .top) {
+                // Pages have no tab strip; their top edge is the title bar.
+                if model.current == nil { WindowDragArea().frame(height: 30) }
+            }
         }
         .background(Theme.window)
         .ignoresSafeArea()
@@ -175,12 +187,12 @@ struct RootView: View {
         if let page = UserDefaults.standard.string(forKey: "ClavraPage") {
             // After restored tabs, which would otherwise come to the front.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                model.show(["keys": .keys, "snippets": .snippets, "remote": .remote][page] ?? .home)
+                model.show(["keys": .keys, "snippets": .snippets, "remote": .remote, "recordings": .recordings, "compare": .compare][page] ?? .home)
             }
         }
         if let target = UserDefaults.standard.string(forKey: "ClavraOpen"), let server = Server(quick: target) { debugOpen(server) }
         if let panel = UserDefaults.standard.string(forKey: "ClavraPanel") {
-            model.sidePanel = panel == "files" ? .files : panel == "ports" ? .ports : nil
+            model.sidePanel = ["files": .files, "ports": .ports, "runbook": .runbook, "logs": .logs][panel]
         }
         if UserDefaults.standard.bool(forKey: "ClavraSnippets") { model.showingSnippets = true }
         // `-ClavraFilesTest dir` drives the file browser for scripts/e2e.sh: downloads everything
@@ -198,6 +210,57 @@ struct RootView: View {
         // `-ClavraSplit beside,below` splits the front tab, one step per word.
         for step in (UserDefaults.standard.string(forKey: "ClavraSplit") ?? "").split(separator: ",") {
             model.split(step == "below" ? .stacked : .sideBySide)
+        }
+        // `-ClavraMovePane 3:left:1` drops pane 3 on pane 1's left edge, as a drag would.
+        if let spec = UserDefaults.standard.string(forKey: "ClavraMovePane")?.split(separator: ":"), spec.count == 3,
+           let from = Int(spec[0]), let to = Int(spec[2]), let ids = model.currentTab?.paneIDs, ids.indices.contains(from - 1), ids.indices.contains(to - 1) {
+            let edge: PaneNode.Edge = ["left": .left, "right": .right, "top": .top, "bottom": .bottom][String(spec[1])] ?? .right
+            model.movePane(ids[from - 1], to: ids[to - 1], edge: edge)
+        }
+        // `-ClavraFollow file:/var/log/syslog` (or `journal:nginx`, `docker:web`) opens Logs following it.
+        if let spec = UserDefaults.standard.string(forKey: "ClavraFollow"), let colon = spec.firstIndex(of: ":") {
+            let kind = spec[..<colon], value = String(spec[spec.index(after: colon)...])
+            let source: LogLens.Source = kind == "journal" ? .journal(unit: value) : kind == "docker" ? .docker(value) : .file(value)
+            Task {
+                try? await Task.sleep(for: .seconds(6))
+                model.current?.logs.follow(source)
+                model.sidePanel = .logs
+            }
+        }
+        // `-ClavraBackUpRun YES` presses "Back Up, Then Run" once it's offered; `-ClavraRestore YES`
+        // then restores that backup a few seconds later.
+        if UserDefaults.standard.bool(forKey: "ClavraBackUpRun") {
+            Task {
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard let session = model.current, session.backupPlan != nil else { continue }
+                    await session.backUpThenRun()
+                    print("CLAVRA_BACKUP \(session.backups.first?.file ?? "none") | \(session.notice ?? "")"); fflush(stdout)
+                    if UserDefaults.standard.bool(forKey: "ClavraRestore"), let backup = session.backups.first {
+                        try? await Task.sleep(for: .seconds(4))
+                        await session.restore(backup)
+                        print("CLAVRA_RESTORE \(session.notice ?? "")"); fflush(stdout)
+                    }
+                    return
+                }
+                print("CLAVRA_BACKUP never offered"); fflush(stdout)
+            }
+        }
+        // `-ClavraCompareSelf ports` compares the opened host with itself through Compare's own path.
+        if let raw = UserDefaults.standard.string(forKey: "ClavraCompareSelf"), let subject = ServerDiff.Subject(rawValue: raw) {
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                guard let session = model.current, let command = ServerDiff.command(for: subject, input: UserDefaults.standard.string(forKey: "ClavraCompareInput") ?? "") else { return }
+                do {
+                    async let a = RemoteRun.run(command, on: session.server, through: nil)
+                    async let b = RemoteRun.run(command, on: session.server, through: nil)
+                    let rows = ServerDiff.rows(try await a, try await b, subject: subject)
+                    print("CLAVRA_COMPARE rows=\(rows.count) same=\(rows.filter { $0.kind == .same }.count) differ=\(rows.filter { $0.kind != .same }.count) first=\(rows.first?.key ?? rows.first?.left ?? "")")
+                } catch {
+                    print("CLAVRA_COMPARE error \(Session.describe(error))")
+                }
+                fflush(stdout)
+            }
         }
         #endif
     }
@@ -221,6 +284,8 @@ struct RootView: View {
             }
         }
         server.startup = UserDefaults.standard.string(forKey: "ClavraStartup") ?? ""
+        server.keepsAlive = UserDefaults.standard.bool(forKey: "ClavraKeepAlive")
+        server.phoneApproval = UserDefaults.standard.bool(forKey: "ClavraPhoneApproval")
         var jump = UserDefaults.standard.string(forKey: "ClavraJump").flatMap(Server.init(quick:))
         jump?.keyPath = server.keyPath
         model.open(server, through: jump)

@@ -23,6 +23,8 @@ private struct GeneralSettings: View {
     @State private var sync = Library.syncsWithICloud
     @State private var check = HealthMonitor.isEnabled
     @State private var restore = AppModel.restoresTabs
+    @State private var notify = FinishedNotice.isEnabled
+    @State private var alertDown = HealthMonitor.alertsWhenDown
     @AppStorage("MenuBarExtra") private var menuBar = true
     @State private var note: String?
 
@@ -41,6 +43,15 @@ private struct GeneralSettings: View {
                     HealthMonitor.isEnabled = check
                     model.health.restart()
                 }
+
+            setting("Tell me when a production host goes down", isOn: $alertDown,
+                    note: "Hosts that ask before risky commands are checked every minute. Two misses in a row and you get a notification, and another when it answers again. Nothing is said while this Mac itself is offline.")
+                .onChange(of: alertDown) { HealthMonitor.alertsWhenDown = alertDown }
+                .disabled(!check)
+
+            setting("Tell me when a long command finishes", isOn: $notify,
+                    note: "A command that ran 20 seconds or more, in a tab you weren't looking at, ends with a notification. Clicking it brings the tab forward.")
+                .onChange(of: notify) { FinishedNotice.isEnabled = notify }
 
             setting("Open last session's tabs on launch", isOn: $restore,
                     note: "Saved hosts that had a tab when Clavra quit connect again.")
@@ -93,6 +104,7 @@ private struct TerminalSettings: View {
     var model: AppModel
     @State private var suggest = CommandHistory.isEnabled
     @State private var forgotten = false
+    @State private var recording = Recordings.policy
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -120,6 +132,17 @@ private struct TerminalSettings: View {
                 forgotten = true
             }
             .disabled(forgotten)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Picker("Record sessions", selection: $recording) {
+                    ForEach(Recordings.Policy.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .font(.system(size: 13, weight: .medium))
+                .onChange(of: recording) { Recordings.policy = recording }
+                Text("A playable copy of each tab, with every command marked on the timeline, in Recordings (⌥⌘4). Kept on this Mac only, readable only by you, removed after \(Recordings.keepDays) days. Files are asciinema .cast files.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 6)
         }
         .padding(24)
     }

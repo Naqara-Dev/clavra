@@ -20,6 +20,9 @@
   try { token = localStorage.getItem("clavra-token-" + place) || ""; } catch (e) {}
   // rows[i] is line number first + i: the scrollback the Mac keeps, then the screen.
   let cols = 80, rows = [], first = 0, cursor = [0, 0], typing = false, ctrl = false, fit = true, session = "", hosts = [];
+  // Held commands on hosts where only a phone can say yes, and the ones already answered here.
+  let pending = [], answered = new Set(), asking = null;
+  const title = document.title;
 
   const palette = ["#2a282e", "#e2857a", "#93c7a6", "#d8b46c", "#8fb3dc", "#c7a0d8", "#8ccbc7", "#d9d6cf",
                    "#5a5660", "#ee9a8f", "#a9d9b9", "#e6c68a", "#a8c6e8", "#d6b5e4", "#a4dcd8", "#f2efe8"];
@@ -216,6 +219,10 @@
         session = message.selected;
         hosts = message.hosts || [];
         $("new").hidden = !hosts.length;
+        pending = message.list.filter((item) => item.approve && item.held);
+        // Answers for commands no longer held are forgotten, so the same command held again asks again.
+        answered = new Set([...answered].filter((key) => pending.some((p) => p.id + "\n" + p.held === key)));
+        ask();
         if (!$("picker").hidden) drawHosts();
         break;
       }
@@ -252,7 +259,8 @@
         typing = message.typing;
         $("input").disabled = !typing;
         $("input").placeholder = typing ? "Type here" : "View only";
-        if (message.held) note(`Waiting for a yes on the Mac: <b>${escape(message.held)}</b>`, true);
+        if (message.held && message.approve) note(`Needs your yes: <b>${escape(message.held)}</b>. Tap to review.`, true);
+        else if (message.held) note(`Waiting for a yes on the Mac: <b>${escape(message.held)}</b>`, true);
         else if (!typing) note("Production tab: view only. Typing can be allowed in Clavra on the Mac.");
         else note("");
         break;
@@ -299,6 +307,33 @@
       challenge = null; sent = 0; received = 0;
       setTimeout(connect, 2000);
     };
+  }
+
+  // A command held on a host where only a phone can say yes: the first one not answered here.
+  function ask(again) {
+    if (again) answered.clear();
+    const item = pending.find((p) => !answered.has(p.id + "\n" + p.held));
+    asking = item || null;
+    $("note").classList.toggle("ask", !!pending.length);
+    if (!item) { $("approve").hidden = true; document.title = title; return; }
+    $("approve-host").textContent = item.title + " · " + (item.placeName || item.place);
+    $("approve-command").textContent = item.held;
+    $("approve-reason").textContent = (item.reason ? item.reason + ". " : "") + "Nothing has been sent yet.";
+    const impact = item.impact || [];
+    $("approve-impact").hidden = !impact.length;
+    $("approve-impact").innerHTML = impact.length
+      ? `<b>${escape(impact[0])}</b>` + impact.slice(1).map((line) => `<span>${escape(line)}</span>`).join("") : "";
+    $("approve").hidden = false;
+    document.title = "Approve? · Clavra";
+    if (navigator.vibrate) navigator.vibrate(120);
+  }
+
+  function answer(run) {
+    if (!asking) return;
+    send({ t: "approve", session: asking.id, command: asking.held, run: run });
+    answered.add(asking.id + "\n" + asking.held);
+    note(run ? "Sent: run it." : "Sent: don't run it.");
+    ask();
   }
 
   // Saved hosts on the Mac, to open one in a new tab.
@@ -371,6 +406,9 @@
   $("fit").addEventListener("click", () => { fit = !fit; $("screen").scrollLeft = 0; sizeText(); });
   $("new").addEventListener("click", () => { drawHosts(); $("picker").hidden = false; });
   $("picker-close").addEventListener("click", () => { $("picker").hidden = true; });
+  $("approve-yes").addEventListener("click", () => answer(true));
+  $("approve-no").addEventListener("click", () => answer(false));
+  $("note").addEventListener("click", () => { if (pending.length) ask(true); });
   $("picker").addEventListener("click", (event) => { if (event.target === $("picker")) $("picker").hidden = true; });
   $("latest").addEventListener("click", () => { const screen = $("screen"); screen.scrollTop = screen.scrollHeight; sizeText(false); });
   $("screen").addEventListener("scroll", () => { $("latest").hidden = atBottom(); }, { passive: true });

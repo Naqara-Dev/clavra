@@ -181,15 +181,44 @@ struct HostEditor: View {
 
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Ask before risky commands").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
-                    Text("rm -rf, DROP TABLE, shutdown, docker rm and the like wait for a yes. On by default for Production.")
+                    Text("Keep sessions alive").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                    Text("Each tab runs inside tmux on the server, so a dropped connection, sleep or quitting Clavra doesn't stop what's running; reconnecting picks up right where it was. Closing the tab ends it. Needs tmux on the server.")
                         .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                Toggle("", isOn: Binding(get: { server.guardsCommands }, set: { server.guardOverride = $0 }))
-                    .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                Toggle("", isOn: $server.keepsAlive).toggleStyle(.switch).labelsHidden().controlSize(.small)
             }
             .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+
+            VStack(spacing: 0) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Ask before risky commands").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                        Text("rm -rf, DROP TABLE, shutdown, docker rm and the like wait for a yes, with what they'd touch on the server. On by default for Production.")
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: Binding(get: { server.guardsCommands }, set: { server.guardOverride = $0 }))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                .padding(12)
+
+                if server.guardsCommands {
+                    Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 12)
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Only a phone can say yes").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                            Text("Those commands run once a phone connected through Phone Access approves them. The Mac on its own can only say no.")
+                                .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $server.phoneApproval).toggleStyle(.switch).labelsHidden().controlSize(.small)
+                    }
+                    .padding(12)
+                }
+            }
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
 
@@ -443,8 +472,11 @@ private struct LabelPicker: View {
                 .help("Make your own label, like Client A or Lab")
             }
 
-            if let binding = Binding($draft) {
-                LabelForm(draft: binding, isNew: isNewDraft, cancel: { draft = nil }, save: save)
+            if let draft {
+                // The form edits its own copy: a binding into `draft` would let the name field,
+                // committing as it loses focus to Cancel, write the label straight back.
+                LabelForm(draft: draft, isNew: isNewDraft, cancel: { self.draft = nil }, save: save)
+                    .id(draft.id)
             }
         }
     }
@@ -493,7 +525,7 @@ private struct LabelChip: View {
 
 /// Name a label and give it a colour.
 private struct LabelForm: View {
-    @Binding var draft: HostLabel
+    @State var draft: HostLabel
     var isNew: Bool
     var cancel: () -> Void
     var save: (HostLabel) -> Void
