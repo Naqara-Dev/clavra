@@ -9,7 +9,7 @@
       content="Clavra is a free SSH client for macOS. It knows which servers are production and holds back commands you can't take back. Split panes, SFTP, port forwarding, server health and your terminal on your phone."
     />
     <link rel="canonical" href="https://clavra.naqara.dev/" />
-    <meta name="theme-color" content="#141316" />
+    <meta name="theme-color" content="#09090b" />
     <meta name="color-scheme" content="dark" />
 
     <meta property="og:type" content="website" />
@@ -33,7 +33,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
@@ -68,8 +68,8 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "SSH client",
             "operatingSystem": "macOS 15 or later",
-            "softwareVersion": "0.5.1",
-            "fileSize": "10.7 MB",
+            "softwareVersion": "0.6.3",
+            "fileSize": "12.2 MB",
             "downloadUrl": "https://github.com/Naqara-Dev/clavra/releases/latest",
             "installUrl": "https://github.com/Naqara-Dev/clavra/releases/latest",
             "image": "https://clavra.naqara.dev/img/icon-512.png",
@@ -82,6 +82,10 @@
             ],
             "featureList": [
               "Asks before risky commands run on production servers",
+              "Shows what a risky command would touch, and backs it up first",
+              "Session recordings with MP4 export and secrets hidden",
+              "Sessions kept alive in tmux",
+              "sudo passwords filled with Touch ID",
               "Split panes and command suggestions",
               "SFTP file browser with in-place editing",
               "Local, remote and SOCKS port forwarding",
@@ -161,47 +165,50 @@
     <main id="main">
       <!-- The guard, played out: the one moment that explains Clavra. -->
       <section class="hero">
-        <div class="wrap hero__grid">
-          <div class="hero__copy">
-            <h1 class="hero__title" aria-label="Every server, one key."><span aria-hidden="true">Every</span> <span aria-hidden="true">server,</span> <span aria-hidden="true">one</span> <span aria-hidden="true">key.</span></h1>
-            <p class="hero__lede">
-              Clavra is an SSH client for the Mac that knows which servers are production, and
-              asks before a command you can't take back.
-            </p>
-            <div class="hero__actions">
-              <a class="button button--brass" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
-              <a class="button button--quiet" href="https://github.com/Naqara-Dev/clavra" rel="noopener">Source on GitHub</a>
-            </div>
-            <p class="hero__fine">Free. macOS 15 or later, Apple Silicon and Intel. No account.</p>
-          </div>
-
-          <div class="guard" data-guard aria-label="An example: Clavra holds back risky commands on a production server">
-            <div class="guard__bar">
-              <span class="guard__lights" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span class="place place--production">Production</span><span class="guard__host">api-prod</span>
-              <span class="guard__count" aria-live="polite"><span data-held>0</span> held</span>
-            </div>
-            <div class="guard__screen">
-              <p class="term"><span class="term__prompt">deploy@api-prod:~/app$</span> <span class="term__typed" data-typed>rm -rf /var/www/releases</span><span class="term__caret" aria-hidden="true"></span><kbd class="term__key" data-key aria-hidden="true">Return</kbd></p>
-              <div class="ask is-in" data-ask>
-                <p class="ask__title">Run this on api-prod?</p>
-                <p class="ask__command" data-ask-command>rm -rf /var/www/releases</p>
-                <p class="ask__why" data-ask-why>Deletes files without asking. Nothing has been sent yet.</p>
-                <div class="ask__buttons">
-                  <button type="button" class="button button--brass button--small" data-answer="stop">Don't Run</button>
-                  <button type="button" class="button button--coral button--small" data-answer="run">Run It</button>
-                </div>
-              </div>
-              <p class="term term--after" data-after hidden></p>
-            </div>
-          </div>
-        </div>
-
         <div class="wrap">
-          <figure class="window window--hero" data-parallax>
-            <img src="/img/hero.jpg" width="1600" height="978" fetchpriority="high"
-              alt="Clavra on a Mac: hosts grouped as Production, Staging and Personal with how fast each answers, and a production tab split in two, a deploy on one side and running containers and logs on the other." />
-          </figure>
+          <div class="hero__copy">
+            <h1 class="hero__title">The SSH client for Mac that asks before you break production</h1>
+            <p class="hero__lede">
+              Split panes, files, tunnels, recordings and your tabs on your phone. And a yes before
+              anything you can't take back.
+            </p>
+            <div class="hero__row">
+              <div class="hero__actions">
+                <a class="button button--light" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
+                <a class="button button--dark" href="https://github.com/Naqara-Dev/clavra" rel="noopener">Source on GitHub</a>
+              </div>
+              <a class="hero__side" href="/connect/">Connect your phone <span aria-hidden="true">→</span></a>
+            </div>
+            <p class="hero__fine">Free, no account. macOS 15 or later, Apple Silicon and Intel.</p>
+          </div>
+
+          <div class="stage">
+            <figure class="window window--hero">
+              <img src="/img/hero.jpg" width="1600" height="978" fetchpriority="high"
+                alt="Clavra on a Mac: hosts grouped as Production, Staging and Personal with how fast each answers, and a production tab split in two, a deploy on one side and running containers and logs on the other." />
+            </figure>
+
+            <div class="guard" data-guard aria-label="An example: Clavra holds back risky commands on a production server">
+              <div class="guard__bar">
+                <span class="guard__lights" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="place place--production">Production</span><span class="guard__host">api-prod</span>
+                <span class="guard__count" aria-live="polite"><span data-held>0</span> held</span>
+              </div>
+              <div class="guard__screen">
+                <p class="term"><span class="term__prompt">deploy@api-prod:~/app$</span> <span class="term__typed" data-typed>rm -rf /var/www/releases</span><span class="term__caret" aria-hidden="true"></span><kbd class="term__key" data-key aria-hidden="true">Return</kbd></p>
+                <div class="ask is-in" data-ask>
+                  <p class="ask__title">Run this on api-prod?</p>
+                  <p class="ask__command" data-ask-command>rm -rf /var/www/releases</p>
+                  <p class="ask__why" data-ask-why>Deletes files without asking. Nothing has been sent yet.</p>
+                  <div class="ask__buttons">
+                    <button type="button" class="button button--light button--small" data-answer="stop">Don't Run</button>
+                    <button type="button" class="button button--dark button--small button--coral" data-answer="run">Run It</button>
+                  </div>
+                </div>
+                <p class="term term--after" data-after hidden></p>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -312,6 +319,47 @@
         </div>
       </section>
 
+      <section class="more" aria-labelledby="more-title">
+        <div class="wrap">
+          <h2 id="more-title">Made for the bad day.</h2>
+          <p class="section__lede">The moments an SSH client usually leaves you on your own.</p>
+          <ul class="more__list">
+            <li class="more__item">
+              <h3>What it would touch</h3>
+              <p>Before a held command runs, a look-alike that only reads checks the server: 1,243 files, 3.2 GB; the units that depend on the service; the containers <code>compose down</code> takes with it.</p>
+            </li>
+            <li class="more__item">
+              <h3>Undo for rm -rf</h3>
+              <p>Back Up, Then Run archives what <code>rm</code> or a recursive <code>chmod</code> would touch, on the server, first. Changed your mind? Put it all back from the status line.</p>
+            </li>
+            <li class="more__item">
+              <h3>Recordings, as video</h3>
+              <p>Press Record in a tab and Stop when you're done. Every command is a marker on the timeline, passwords and tokens are hidden, and any recording exports as an MP4.</p>
+            </li>
+            <li class="more__item">
+              <h3>Sessions that stay</h3>
+              <p>Each tab can run inside tmux on the server, set up for you. Wi-Fi drops, sleep or quitting Clavra don't stop what's running; reconnecting lands you where you were.</p>
+            </li>
+            <li class="more__item">
+              <h3>sudo with Touch ID</h3>
+              <p>When sudo asks, Clavra fills the password from the Keychain after Touch ID. It's never typed, so it never lands in the scrollback or the history.</p>
+            </li>
+            <li class="more__item">
+              <h3>Down, and back</h3>
+              <p>Production hosts are checked every minute. Two misses in a row and you get a notification, and another when it answers again. Quiet while your own Mac is offline.</p>
+            </li>
+            <li class="more__item">
+              <h3>Compare two servers</h3>
+              <p>Side by side: packages, running services, listening ports, a config file, or a whole folder by checksum. Find what's different between staging and production.</p>
+            </li>
+            <li class="more__item">
+              <h3>Logs and runbooks</h3>
+              <p>Follow a log, the journal or a container beside the terminal, errors standing out. Keep a Markdown runbook per host whose commands run with a click.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
       <section id="phone" class="phone" aria-labelledby="phone-title">
         <div class="wrap phone__grid">
           <figure class="phone__shot" data-phone>
@@ -333,8 +381,8 @@
               <li>On the Mac again: Allow. Then type.</li>
             </ol>
             <div class="phone__actions">
-              <a class="button button--brass" href="/connect/">Connect your phone</a>
-              <a class="button button--quiet" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Get Clavra for Mac</a>
+              <a class="button button--light" href="/connect/">Connect your phone</a>
+              <a class="button button--dark" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Get Clavra for Mac</a>
             </div>
             <p class="phone__safe">
               The QR code carries a key that never crosses the network. Phone and Mac encrypt
@@ -397,13 +445,14 @@
       </section>
 
       <section class="end">
-        <div class="wrap end__row">
-          <img class="end__icon" src="/img/icon-512.png" width="96" height="96" alt="" loading="lazy" />
-          <div>
-            <h2>Bring your servers.</h2>
-            <p>Download Clavra, import your <code>~/.ssh/config</code>, and mark the ones that matter.</p>
+        <div class="wrap end__box">
+          <img class="end__icon" src="/img/icon-512.png" width="72" height="72" alt="" loading="lazy" />
+          <h2>Bring your servers.</h2>
+          <p>Download Clavra, import your <code>~/.ssh/config</code>, and mark the ones that matter.</p>
+          <div class="end__actions">
+            <a class="button button--light" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
+            <a class="button button--dark" href="https://github.com/Naqara-Dev/clavra/releases" rel="noopener">What's new</a>
           </div>
-          <a class="button button--brass" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
         </div>
       </section>
     </main>

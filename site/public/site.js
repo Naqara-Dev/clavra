@@ -223,7 +223,7 @@
 
   var reveal = $$(
     ".places h2, .places .section__lede, .places__item, .feature__text, .phone__text, " +
-    ".details h2, .details__list > div, .faq h2, .faq details, .end__row"
+    ".more h2, .more .section__lede, .more__item, .details h2, .details__list > div, .faq h2, .faq details, .end__box"
   );
   var wipes = $$("[data-wipe]");
 
@@ -231,7 +231,7 @@
     document.documentElement.classList.add("js-motion");
     reveal.forEach(function (element, index) {
       element.setAttribute("data-reveal", "");
-      if (element.matches(".places__item, .details__list > div, .faq details")) {
+      if (element.matches(".places__item, .more__item, .details__list > div, .faq details")) {
         element.style.setProperty("--reveal-delay", (index % 4) * 90 + "ms");
       }
     });
@@ -267,35 +267,18 @@
     steps.forEach(function (step) { step.classList.add("is-on"); });
   }
 
-  /* ---------- Scroll: a thin progress line, and the hero screenshot drifting a little ---------- */
-
-  var parallax = $("[data-parallax]");
-  var progress = null;
-  if (!still) {
-    progress = document.createElement("div");
-    progress.className = "scroll-progress";
-    progress.setAttribute("aria-hidden", "true");
-    document.body.appendChild(progress);
-  }
+  /* ---------- Scroll: the header gets its backdrop once the page moves ---------- */
 
   var queued = false;
   function onScroll() {
-    if (queued || still) return;
+    if (queued) return;
     queued = true;
     requestAnimationFrame(function () {
       queued = false;
-      var scrollable = document.documentElement.scrollHeight - window.innerHeight;
-      progress.style.transform = "scaleX(" + (scrollable > 0 ? Math.min(1, window.scrollY / scrollable) : 0) + ")";
-      if (parallax) {
-        var box = parallax.getBoundingClientRect();
-        var shift = window.innerWidth > 720 && box.bottom > 0 && box.top < window.innerHeight
-          ? (window.innerHeight - box.top) * -0.05 : 0;
-        parallax.style.translate = "0 " + shift.toFixed(1) + "px";
-      }
+      document.documentElement.classList.toggle("is-scrolled", window.scrollY > 8);
     });
   }
   window.addEventListener("scroll", onScroll, { passive: true });
-  window.addEventListener("resize", onScroll);
   onScroll();
 
   /* ---------- Which section you're in, under the header links ---------- */
