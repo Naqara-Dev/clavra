@@ -222,8 +222,8 @@
   /* ---------- Reveals as the page scrolls ---------- */
 
   var reveal = $$(
-    ".places h2, .places .section__lede, .places__item, .feature__text, .phone__text, " +
-    ".more h2, .more .section__lede, .more__item, .details h2, .details__list > div, .faq h2, .faq details, .end__box"
+    ".places h2, .places .section__lede, .panes, .places__item, .feature__text, .phone__text, " +
+    ".more h2, .more .section__lede, .more__item, .details h2, .details__list > div, .faq h2, .faq details, .end__row"
   );
   var wipes = $$("[data-wipe]");
 

@@ -240,20 +240,34 @@
             Give each host a label: Personal, Staging, Production, or one of your own. Clavra takes
             it from there: calm where it can be, careful where it has to be.
           </p>
+          <div class="panes" role="img" aria-label="One window split three ways: a personal, a staging and a production server">
+            <div class="panes__bar" aria-hidden="true"><span class="panes__lights"><i></i><i></i><i></i></span></div>
+            <div class="panes__row" aria-hidden="true">
+              <div class="pane">
+                <p class="pane__name label label--personal">Personal <span>pi@lab</span></p>
+                <div class="mini" data-mini="personal"><p class="mini__line"></p></div>
+              </div>
+              <div class="pane">
+                <p class="pane__name label label--staging">Staging <span>web-staging</span></p>
+                <div class="mini" data-mini="staging"><p class="mini__line"></p></div>
+              </div>
+              <div class="pane pane--production">
+                <p class="pane__name label label--production">Production <span>api-prod</span></p>
+                <div class="mini" data-mini="production"><p class="mini__line"></p></div>
+              </div>
+            </div>
+          </div>
           <ul class="places__list">
             <li class="places__item">
-              <h3 class="label label--personal">Personal</h3>
-              <div class="mini" data-mini="personal" aria-hidden="true"><p class="mini__line"></p></div>
+              <h3>Personal</h3>
               <p>Your VPS, the Pi in the cupboard. Nothing in your way: just the terminal, fast.</p>
             </li>
             <li class="places__item">
-              <h3 class="label label--staging">Staging</h3>
-              <div class="mini" data-mini="staging" aria-hidden="true"><p class="mini__line"></p></div>
+              <h3>Staging</h3>
               <p>Where you try things. Clavra remembers what you ran and offers it back as you type.</p>
             </li>
             <li class="places__item">
-              <h3 class="label label--production">Production</h3>
-              <div class="mini mini--production" data-mini="production" aria-hidden="true"><p class="mini__line"></p></div>
+              <h3>Production</h3>
               <p>A coral mark on every pane, and a yes before anything you can't undo. Nothing it remembers is kept on disk.</p>
             </li>
           </ul>
@@ -445,10 +459,11 @@
       </section>
 
       <section class="end">
-        <div class="wrap end__box">
-          <img class="end__icon" src="/img/icon-512.png" width="72" height="72" alt="" loading="lazy" />
-          <h2>Bring your servers.</h2>
-          <p>Download Clavra, import your <code>~/.ssh/config</code>, and mark the ones that matter.</p>
+        <div class="wrap end__row">
+          <div>
+            <h2>Bring your servers.</h2>
+            <p>Download Clavra, import your <code>~/.ssh/config</code>, and mark the ones that matter.</p>
+          </div>
           <div class="end__actions">
             <a class="button button--light" href="https://github.com/Naqara-Dev/clavra/releases/latest" rel="noopener">Download for Mac</a>
             <a class="button button--dark" href="https://github.com/Naqara-Dev/clavra/releases" rel="noopener">What's new</a>

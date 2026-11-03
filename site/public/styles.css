@@ -599,32 +599,100 @@ p {
   padding: clamp(80px, 11vw, 144px) 0 clamp(64px, 8vw, 104px);
 }
 
+/* One window split three ways, the way the app shows them. */
+.panes {
+  margin-top: 56px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--terminal);
+}
+
+.panes__bar {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panes__lights {
+  display: flex;
+  gap: 6px;
+}
+
+.panes__lights i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bg-4);
+}
+
+.panes__row {
+  display: grid;
+}
+
+.pane {
+  position: relative;
+  padding: 14px 18px 20px;
+}
+
+.pane + .pane {
+  border-top: 1px solid var(--line);
+}
+
+.pane--production::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: var(--coral);
+}
+
+.pane .pane__name {
+  font-size: 0.82rem;
+}
+
+.pane .pane__name span {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
 .places__list {
   list-style: none;
-  margin: 56px 0 0;
+  margin: 32px 0 0;
   padding: 0;
   display: grid;
-  gap: 16px;
+  gap: 24px;
 }
 
 @media (min-width: 820px) {
+  .panes__row,
   .places__list {
     grid-template-columns: repeat(3, 1fr);
   }
+  .pane + .pane {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+  .places__list {
+    gap: 0;
+  }
+  .places__item {
+    padding-right: 32px;
+  }
 }
 
-.places__item {
-  padding: 22px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--bg-2);
+.places__item h3 {
+  font-size: 1rem;
 }
 
 .places__item p {
-  margin-top: 16px;
+  margin-top: 6px;
   color: var(--text-2);
   font-size: 0.95rem;
-  max-width: 36ch;
+  font-weight: 300;
+  max-width: 34ch;
 }
 
 /* ---------- Features ---------- */
@@ -680,8 +748,7 @@ p {
   margin: 56px 0 0;
   padding: 0;
   display: grid;
-  border-top: 1px solid var(--line);
-  border-left: 1px solid var(--line);
+  column-gap: 40px;
 }
 
 @media (min-width: 640px) {
@@ -697,14 +764,8 @@ p {
 }
 
 .more__item {
-  padding: 26px 24px 30px;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  transition: background-color 200ms ease;
-}
-
-.more__item:hover {
-  background: var(--bg-2);
+  padding: 22px 0 34px;
+  border-top: 1px solid var(--line);
 }
 
 .more__item p {
@@ -944,42 +1005,35 @@ p {
 /* ---------- End ---------- */
 
 .end {
-  padding: clamp(64px, 9vw, 112px) 0 clamp(80px, 10vw, 128px);
+  padding: clamp(80px, 11vw, 144px) 0 clamp(72px, 9vw, 112px);
+  border-top: 1px solid var(--line);
 }
 
-.end__box {
+.end__row {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding: clamp(48px, 7vw, 88px) 24px;
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: radial-gradient(70% 90% at 50% 0%, rgba(216, 180, 108, 0.06), transparent 70%), var(--bg-2);
-}
-
-.end__icon {
-  border-radius: 17px;
-  margin-bottom: 26px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
 }
 
 .end h2 {
+  font-size: clamp(2.4rem, 5.4vw, 4.4rem);
+  letter-spacing: -0.045em;
   max-width: none;
 }
 
 .end p {
-  margin-top: 12px;
+  margin-top: 14px;
   color: var(--text-2);
   font-weight: 300;
-  font-size: 1.08rem;
+  font-size: 1.1rem;
 }
 
 .end__actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
   gap: 10px;
-  margin-top: 30px;
 }
 
 /* ---------- Footer ---------- */
@@ -1036,19 +1090,11 @@ p {
 .label--production { color: var(--coral); }
 
 .mini {
-  margin-top: 16px;
-  height: 112px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--terminal);
-  border: 1px solid var(--line);
-  font: 0.78rem/1.6 var(--mono);
+  margin-top: 12px;
+  height: 84px;
+  font: 0.8rem/1.6 var(--mono);
   color: #e6e5e0;
   overflow: hidden;
-}
-
-.mini--production {
-  border-color: rgba(226, 133, 122, 0.35);
 }
 
 .mini__line {
