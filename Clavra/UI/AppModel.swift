@@ -14,6 +14,7 @@ final class AppModel {
     let health = HealthMonitor()
     let remote = RemoteAccess()
     let runbooks = RunbookStore()
+    let quickHistory = QuickHistory()
     /// Every open terminal, in every tab and pane.
     private(set) var sessions: [Session] = []
     private(set) var tabs: [TabGroup] = [] {
@@ -183,7 +184,19 @@ final class AppModel {
             return open(saved)
         }
         guard let server = Server(quick: text) else { return }
+        // A saved host reached by its address goes as itself; anything else is remembered here.
+        if let saved = store.hosts.first(where: { $0.address == server.address && $0.port == server.port && $0.user == server.user }) {
+            return open(saved)
+        }
+        quickHistory.record(server.target)
         open(server)
+    }
+
+    /// Saves a place from the quick history as a host: the editor opens with it filled in.
+    func saveFromHistory(_ target: String) {
+        guard var server = Server(quick: target) else { return }
+        server.name = ""
+        editing = server
     }
 
     /// Closes one pane. The last pane of a tab takes the tab with it.
@@ -237,7 +250,9 @@ final class AppModel {
         if let saved = store.hosts.first(where: { $0.address == host && $0.port == port && $0.user == user }) {
             return open(saved)
         }
-        open(Server(name: host, address: host, port: port, user: user))
+        let server = Server(name: host, address: host, port: port, user: user)
+        quickHistory.record(server.target)
+        open(server)
     }
 
     /// The front tab's scrollback, as a text file.

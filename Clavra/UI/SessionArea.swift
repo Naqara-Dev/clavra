@@ -937,7 +937,7 @@ struct TerminalPane: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalHost { TerminalHost(session.terminal) }
 
     func updateNSView(_ host: TerminalHost, context: Context) {
-        host.adopt(session.terminal)
+        host.adoptIfOwner(session.terminal)
         guard session.state == .connected, isFocused else { return }
         let view = session.terminal
         DispatchQueue.main.async {
@@ -954,11 +954,31 @@ struct TerminalPane: NSViewRepresentable {
 /// small are ignored, so the terminal only ever takes a size it can really be shown at.
 final class TerminalHost: NSView {
     private static let smallest = NSSize(width: 60, height: 30)
+    /// The host each terminal belongs to: the newest one. When a split closes, SwiftUI makes a new
+    /// host for the pane that's left while the old one is still on its way out; if the old one
+    /// took the terminal back, it would leave with it and the pane would go blank.
+    private static let owners = NSMapTable<TerminalView, TerminalHost>(keyOptions: .weakMemory, valueOptions: .weakMemory)
 
     init(_ terminal: TerminalView) {
         super.init(frame: .zero)
         clipsToBounds = true
+        Self.owners.setObject(self, forKey: terminal)
         adopt(terminal)
+    }
+
+    /// Takes the terminal only if this is the host it belongs to.
+    func adoptIfOwner(_ terminal: TerminalView) {
+        guard Self.owners.object(forKey: terminal) === self else { return }
+        adopt(terminal)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Back on screen as the owner, and the terminal went elsewhere meanwhile: take it back.
+        if window != nil, let terminal = Self.owners.keyEnumerator().allObjects
+            .compactMap({ $0 as? TerminalView }).first(where: { Self.owners.object(forKey: $0) === self }) {
+            adopt(terminal)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

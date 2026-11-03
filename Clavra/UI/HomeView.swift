@@ -6,6 +6,8 @@ import SwiftUI
 struct HomeView: View {
     @Bindable var model: AppModel
     @State private var text = ""
+    /// Where ↑ has got to in the quick history; nil while typing.
+    @State private var recall: Int?
     @State private var tests: [Server.ID: HostTest] = [:]
     @FocusState private var focused: Bool
 
@@ -29,10 +31,12 @@ struct HomeView: View {
 
                 field.padding(.top, 24)
 
+                if !query.isEmpty, !model.quickHistory.matching(query).isEmpty { earlier }
                 if model.store.hosts.isEmpty {
+                    if query.isEmpty, !model.quickHistory.targets.isEmpty { recent }
                     empty
                 } else {
-                    if query.isEmpty && !model.store.recent.isEmpty { recent }
+                    if query.isEmpty && (!model.store.recent.isEmpty || !model.quickHistory.targets.isEmpty) { recent }
                     hosts
                 }
             }
@@ -57,7 +61,10 @@ struct HomeView: View {
                 .font(.system(size: 14))
                 .focused($focused)
                 .onSubmit(submit)
-                .onExitCommand { text = "" }
+                .onExitCommand { text = ""; recall = nil }
+                // ↑ and ↓ go through places reached before, newest first, as in a shell.
+                .onKeyPress(.upArrow) { step(1) }
+                .onKeyPress(.downArrow) { step(-1) }
             if !query.isEmpty {
                 Text(firstMatch.map { "Return opens \($0.title)" } ?? "Return connects")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
@@ -71,7 +78,40 @@ struct HomeView: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.line))
     }
 
+    /// Places reached before that match what's typed: a click connects. Return still connects to
+    /// exactly what's typed, so `root@10.0.0.1` never turns into `root@10.0.0.12`.
+    private var earlier: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            heading("Reached before")
+            FlowLayout(spacing: 8) {
+                ForEach(model.quickHistory.matching(query).prefix(6), id: \.self) { target in
+                    QuickChip(target: target) {
+                        model.quickConnect(target)
+                        text = ""
+                    }
+                }
+            }
+        }
+        .padding(.top, 18)
+    }
+
+    /// Fills the field with the place reached `offset` steps further back (↑) or forward (↓).
+    private func step(_ offset: Int) -> KeyPress.Result {
+        let list = model.quickHistory.targets
+        guard !list.isEmpty, recall != nil || query.isEmpty else { return .ignored }
+        let next = (recall ?? -1) + offset
+        if next < 0 {
+            recall = nil
+            text = ""
+        } else {
+            recall = min(next, list.count - 1)
+            text = list[recall!]
+        }
+        return .handled
+    }
+
     private func submit() {
+        recall = nil
         guard !query.isEmpty else { return }
         if let firstMatch { model.open(firstMatch) } else { model.quickConnect(query) }
         text = ""
@@ -86,6 +126,18 @@ struct HomeView: View {
                 HStack(spacing: 8) {
                     ForEach(model.store.recent.prefix(6)) { server in
                         RecentChip(server: server) { model.open(server) }
+                    }
+                    ForEach(model.quickHistory.targets.prefix(6), id: \.self) { target in
+                        QuickChip(target: target) { model.quickConnect(target) }
+                            .contextMenu {
+                                Button("Save as Host…") { model.saveFromHistory(target) }
+                                Button("Copy") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(target, forType: .string)
+                                }
+                                Divider()
+                                Button("Remove from Recent", role: .destructive) { model.quickHistory.remove(target) }
+                            }
                     }
                 }
             }
@@ -319,6 +371,34 @@ private struct HomeRow: View {
             Text(text).font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// A place reached by typing it, not saved as a host.
+private struct QuickChip: View {
+    var target: String
+    var open: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.line))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(target).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
+                    Text("Not saved").font(.system(size: 10.5)).foregroundStyle(Theme.tertiary)
+                }
+            }
+            .padding(.leading, 8).padding(.trailing, 12).padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Theme.cardHover : Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Connect to \(target). Right-click to save it as a host.")
     }
 }
 
