@@ -59,6 +59,8 @@ ssh-keygen -q -t ecdsa -b 256 -N "" -C e2e -f "$T/p256"
 ssh-keygen -q -t ecdsa -b 384 -N "" -C e2e -f "$T/p384"
 ssh-keygen -q -t ecdsa -b 521 -N "" -C e2e -f "$T/p521"
 ssh-keygen -q -t ecdsa -b 256 -m PEM -N "" -C e2e -f "$T/pem"
+# RSA signs with rsa-sha2-512: OpenSSH 8.8+ turns down the old SHA-1 ssh-rsa.
+ssh-keygen -q -t rsa -b 3072 -N "" -C e2e -f "$T/rsa"
 cat "$T"/*.pub > "$T/authorized_keys"
 cat > "$T/sshd_config" <<EOF
 ListenAddress 127.0.0.1
@@ -83,7 +85,7 @@ dd if=/dev/urandom of="$T/upload.bin" bs=1k count=700 2>/dev/null
 sleep 1
 
 echo "— sign-in"
-for key in ed25519 p256 p384 p521 pem; do
+for key in ed25519 p256 p384 p521 pem rsa; do
   open_host -ClavraKey "$T/$key" -ClavraType "touch $T/marks/$key\\r"
   sleep 8
   expect "$key key signs in and types" "[ -f '$T/marks/$key' ]"

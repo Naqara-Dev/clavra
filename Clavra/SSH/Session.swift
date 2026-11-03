@@ -1,6 +1,7 @@
 import AppKit
 import Citadel
 import NIOCore
+import NIOPosix
 import NIOSSH
 import SwiftTerm
 
@@ -156,6 +157,9 @@ final class Session: Identifiable {
     private var history: CommandHistory { CommandHistory.of(server, saved: isSavedHost) }
     /// Automatic attempts since the connection last dropped.
     @ObservationIgnored private var attempts = 0
+    /// Tries at opening this tab that couldn't reach the server (just launched, network waking, macOS
+    /// asking about the local network). A few more are made before saying it failed.
+    @ObservationIgnored private var openTries = 0
     @ObservationIgnored private var userClosed = false
     /// Bumped by every connect and close. A connection attempt that finishes after its generation
     /// has passed closes what it opened instead of taking over the tab: Citadel's connect doesn't
@@ -222,6 +226,7 @@ final class Session: Identifiable {
         stopRecording()
         teardown(keepFiles: false)
         attempts = 0
+        openTries = 0
         carried = []
         userClosed = false
         state = .connecting
@@ -295,25 +300,32 @@ final class Session: Identifiable {
     private func run(_ current: Int) async {
         func stale() -> Bool { current != generation || userClosed }
         do {
-            nonisolated(unsafe) let method = try Credentials.method(for: server)
+            let signIns = try Credentials.signIns(for: server)
             let target = server
             let check = HostKeyCheck { [weak self] key in await self?.decide(key, for: target, isJump: false) ?? false }
-            var settings = SSHClientSettings(host: server.address, port: server.port,
-                                             authenticationMethod: { method }, hostKeyValidator: .custom(check))
-            settings.connectTimeout = .seconds(12)
+            func settings(_ method: SSHAuthenticationMethod) -> SSHClientSettings {
+                nonisolated(unsafe) let method = method
+                var settings = SSHClientSettings(host: target.address, port: target.port,
+                                                 authenticationMethod: { method }, hostKeyValidator: .custom(check))
+                settings.connectTimeout = .seconds(12)
+                return settings
+            }
             let client: ClientBox
             if let jump = jumpServer {
-                nonisolated(unsafe) let jumpMethod = try Credentials.method(for: jump)
+                let jumpSignIns = try Credentials.signIns(for: jump)
                 let jumpCheck = HostKeyCheck { [weak self] key in await self?.decide(key, for: jump, isJump: true) ?? false }
-                var hop = SSHClientSettings(host: jump.address, port: jump.port,
-                                            authenticationMethod: { jumpMethod }, hostKeyValidator: .custom(jumpCheck))
-                hop.connectTimeout = .seconds(12)
-                let jumpClient = ClientBox(try await SSHClient.connect(to: hop))
+                let jumpClient = try await Connector.connect(jumpSignIns) { method in
+                    nonisolated(unsafe) let method = method
+                    var hop = SSHClientSettings(host: jump.address, port: jump.port,
+                                                authenticationMethod: { method }, hostKeyValidator: .custom(jumpCheck))
+                    hop.connectTimeout = .seconds(12)
+                    return ClientBox(try await SSHClient.connect(to: hop))
+                }.client
                 if stale() { return jumpClient.close() }
                 self.jumpClient = jumpClient
-                client = try await Self.hop(through: jumpClient, settings)
+                client = try await Connector.connect(signIns) { try await Self.hop(through: jumpClient, settings($0)) }.client
             } else {
-                client = ClientBox(try await SSHClient.connect(to: settings))
+                client = try await Connector.connect(signIns) { ClientBox(try await SSHClient.connect(to: settings($0))) }.client
             }
             if stale() {
                 client.close()
@@ -336,6 +348,7 @@ final class Session: Identifiable {
             }
             let wasReconnect = attempts > 0
             attempts = 0
+            openTries = 0
             if wasReconnect { terminal.feed(text: "\r\n\u{1b}[2m[Clavra: connected again]\u{1b}[0m\r\n") }
             startWatching()
             seedHistory()
@@ -394,6 +407,18 @@ final class Session: Identifiable {
                 state = .reconnecting(attempt: attempts)
                 terminal.feed(text: "\r\n\u{1b}[2m[Clavra: connection lost, trying again]\u{1b}[0m\r\n")
                 let wait = [2, 5, 10, 20][attempts - 1]
+                task = Task {
+                    try? await Task.sleep(for: .seconds(wait))
+                    guard !Task.isCancelled, !self.userClosed, current == self.generation else { return }
+                    await self.run(current)
+                }
+                return
+            }
+            // Never connected, and the server couldn't be reached at all: try again a few times
+            // before saying so. Being turned away (a key, a password, a host key) isn't retried.
+            if !wasConnected, !userClosed, openTries < 3, Self.isUnreachable(error) {
+                openTries += 1
+                let wait = [2, 4, 8][openTries - 1]
                 task = Task {
                     try? await Task.sleep(for: .seconds(wait))
                     guard !Task.isCancelled, !self.userClosed, current == self.generation else { return }
@@ -1030,6 +1055,19 @@ final class Session: Identifiable {
     /// Plain words for the errors people actually hit.
     nonisolated static func describe(_ error: Error) -> String {
         if let error = error as? ClavraError, let text = error.errorDescription { return text }
+        // NIO wraps what each address said; the first one says enough.
+        if let error = error as? NIOConnectionError {
+            if error.dnsAError != nil, error.dnsAAAAError != nil, error.connectionErrors.isEmpty { return "Couldn't find that address." }
+            let inner = error.connectionErrors.map { String(describing: $0.error) }.joined(separator: " ")
+            if inner.contains("No route to host") || inner.contains("errno: 65") || inner.contains("Network is unreachable") || inner.contains("errno: 51") {
+                return isLocal(error.host)
+                    ? "Couldn't reach it on the local network. If macOS asked whether Clavra may find devices on your local network, allow it in System Settings › Privacy & Security › Local Network."
+                    : "Couldn't reach the server from this network. Check the address, and whether you're online or need a VPN."
+            }
+            if inner.contains("Connection refused") || inner.contains("errno: 61") { return "The server refused the connection. Is SSH running on that port?" }
+            if inner.contains("timed out") || inner.contains("errno: 60") { return "The server didn't answer. Check the address and your network." }
+            return "Couldn't reach the server. Check the address and your network."
+        }
         let raw = String(describing: error)
         if raw.contains("allAuthenticationOptionsFailed") || raw.contains("authentication") {
             return "The server didn't accept this key or password."
@@ -1040,6 +1078,24 @@ final class Session: Identifiable {
         if raw.contains("hostKeyRejected") { return ClavraError.hostKeyRejected.errorDescription! }
         if raw.contains("NXDOMAIN") || raw.contains("unknownHost") || raw.contains("resolve") { return "Couldn't find that address." }
         return error.localizedDescription
+    }
+}
+
+extension Session {
+    /// A private (RFC 1918), link-local or .local address: one that needs macOS's Local Network permission.
+    nonisolated static func isLocal(_ host: String) -> Bool {
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        if host.hasSuffix(".local") { return true }
+        guard parts.count == 4 else { return false }
+        return parts[0] == 10 || (parts[0] == 172 && (16...31).contains(parts[1])) || (parts[0] == 192 && parts[1] == 168)
+            || (parts[0] == 169 && parts[1] == 254)
+    }
+
+    /// Couldn't reach the server at all (as opposed to being turned away): worth another try.
+    nonisolated static func isUnreachable(_ error: Error) -> Bool {
+        if error is NIOConnectionError { return true }
+        let raw = String(describing: error)
+        return raw.contains("connectTimeout") || raw.contains("No route to host") || raw.contains("Network is unreachable")
     }
 }
 

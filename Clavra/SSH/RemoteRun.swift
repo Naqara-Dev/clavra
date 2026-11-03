@@ -7,26 +7,26 @@ import NIOSSH
 /// Clavra already trusts is accepted; a new one is for a tab to ask about.
 enum RemoteRun {
     static func run(_ command: String, on server: Server, through jump: Server?) async throws -> String {
-        nonisolated(unsafe) let method = try Credentials.method(for: server)
+        let signIns = try Credentials.signIns(for: server)
         func check(_ host: Server) -> HostKeyCheck {
             HostKeyCheck { key in KnownHosts.check(host: host.address, port: host.port, key: key) == .trusted }
         }
-        var settings = SSHClientSettings(host: server.address, port: server.port,
-                                         authenticationMethod: { method }, hostKeyValidator: .custom(check(server)))
-        settings.connectTimeout = .seconds(12)
+        func settings(_ method: SSHAuthenticationMethod, for host: Server) -> SSHClientSettings {
+            nonisolated(unsafe) let method = method
+            var settings = SSHClientSettings(host: host.address, port: host.port,
+                                             authenticationMethod: { method }, hostKeyValidator: .custom(check(host)))
+            settings.connectTimeout = .seconds(12)
+            return settings
+        }
         var hop: SSHClient?
         let client: SSHClient
         do {
             if let jump {
-                nonisolated(unsafe) let jumpMethod = try Credentials.method(for: jump)
-                var first = SSHClientSettings(host: jump.address, port: jump.port,
-                                              authenticationMethod: { jumpMethod }, hostKeyValidator: .custom(check(jump)))
-                first.connectTimeout = .seconds(12)
-                let opened = try await SSHClient.connect(to: first)
+                let opened = try await Connector.connect(try Credentials.signIns(for: jump)) { try await SSHClient.connect(to: settings($0, for: jump)) }.client
                 hop = opened
-                client = try await opened.jump(to: settings)
+                client = try await Connector.connect(signIns) { try await opened.jump(to: settings($0, for: server)) }.client
             } else {
-                client = try await SSHClient.connect(to: settings)
+                client = try await Connector.connect(signIns) { try await SSHClient.connect(to: settings($0, for: server)) }.client
             }
         } catch {
             try? await hop?.close()
