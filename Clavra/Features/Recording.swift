@@ -26,6 +26,12 @@ enum Recordings {
 
     static let keepDays = 30
 
+    /// Posted on the main thread when a recording starts or is finished, so the list can refresh.
+    static let didChange = Notification.Name("ClavraRecordingsChanged")
+    static func changed() {
+        DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
+    }
+
     static var folder: URL { Library.folder.appending(path: "Recordings", directoryHint: .isDirectory) }
 
     static func records(_ server: Server) -> Bool {
@@ -171,6 +177,7 @@ final class SessionRecorder: @unchecked Sendable {
             "clavra": ["host": server.title, "hostID": server.id.uuidString, "target": server.target],
         ]
         write(header)
+        Recordings.changed()
     }
 
     func output(_ bytes: [UInt8]) {
@@ -204,6 +211,7 @@ final class SessionRecorder: @unchecked Sendable {
         queue.async { [self] in
             try? handle.close()
             if redact { Redaction.apply(to: url) }
+            Recordings.changed()
         }
     }
 

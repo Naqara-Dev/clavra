@@ -29,10 +29,12 @@ struct RecordingsView: View {
                 if let selection {
                     PlayerView(info: selection, highlight: query) { delete(selection) }
                         .id(selection.url)
+                } else if recordings.isEmpty, !loading {
+                    emptyGuide.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "play.rectangle").font(.system(size: 28)).foregroundStyle(Theme.tertiary)
-                        Text(recordings.isEmpty ? "Nothing recorded yet" : "Pick a recording to play it back")
+                        Text("Pick a recording to play it back")
                             .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -41,6 +43,9 @@ struct RecordingsView: View {
         }
         .background(Theme.window)
         .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: Recordings.didChange)) { _ in
+            Task { await load() }
+        }
         .sheet(isPresented: $editingWords) { RedactionWords() }
     }
 
@@ -105,11 +110,46 @@ struct RecordingsView: View {
         .background(Theme.sidebar.opacity(0.5))
     }
 
+    /// How recording works, and which of your hosts the current choice covers.
+    private var emptyGuide: some View {
+        let covered = model.store.hosts.filter { !$0.isGitRemote && Recordings.records($0) }
+        let whom: String = switch policy {
+        case .off: "Recording is off. Pick Every host, or Hosts that ask before risky commands, at the top left."
+        case .all: "Every host is recorded."
+        case .production:
+            covered.isEmpty
+                ? "None of your hosts asks before risky commands yet, so nothing gets recorded. Turn on Ask before risky commands in a host's settings, or pick Every host at the top left."
+                : "Recorded: \(covered.prefix(4).map(\.title).joined(separator: ", "))\(covered.count > 4 ? " and \(covered.count - 4) more" : ""). Hosts in Production, or with Ask before risky commands on."
+        }
+        return VStack(alignment: .leading, spacing: 14) {
+            Image(systemName: "record.circle").font(.system(size: 26)).foregroundStyle(Theme.tertiary)
+            Text("Nothing recorded yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+            Text(whom).font(.system(size: 12.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                step("1", "Open a tab to a recorded host. A red “rec” shows in its bar while it records. Tabs already open aren't recorded; open them again.")
+                step("2", "Work as usual. Every command you run is marked on the timeline.")
+                step("3", "It shows up here as it records. When the tab closes, secrets in it are hidden, if Hide secrets is on.")
+                step("4", "Click it to play it back, drag to scrub, or click a command to jump to it. Search finds hosts and commands.")
+            }
+        }
+        .frame(maxWidth: 420, alignment: .leading)
+        .padding(24)
+    }
+
+    private func step(_ number: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text(number).font(.system(size: 11, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.brass)
+                .frame(width: 18, height: 18).background(Circle().fill(Theme.brass.opacity(0.14)))
+            Text(text).font(.system(size: 12.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func load() async {
-        loading = true
-        recordings = await Task.detached(priority: .userInitiated) { Recordings.list() }.value
+        let found = await Task.detached(priority: .userInitiated) { Recordings.list() }.value
+        recordings = found
         loading = false
-        if selection == nil { selection = recordings.first }
+        if let picked = selection, !found.contains(where: { $0.url == picked.url }) { selection = nil }
+        if selection == nil { selection = found.first }
     }
 
     private func delete(_ info: Recordings.Info) {
