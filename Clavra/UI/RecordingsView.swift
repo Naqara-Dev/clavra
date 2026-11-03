@@ -10,6 +10,8 @@ struct RecordingsView: View {
     @State private var selection: Recordings.Info?
     @State private var query = ""
     @State private var policy = Recordings.policy
+    @State private var redact = Redaction.isOn
+    @State private var editingWords = false
 
     private var shown: [Recordings.Info] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -39,20 +41,29 @@ struct RecordingsView: View {
         }
         .background(Theme.window)
         .task { await load() }
+        .sheet(isPresented: $editingWords) { RedactionWords() }
     }
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recordings").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.ink)
-                HStack(spacing: 8) {
-                    Text("Record").font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize()
-                    Picker("", selection: $policy) {
-                        ForEach(Recordings.Policy.allCases, id: \.self) { Text($0.label).tag($0) }
+                Dropdown(icon: "record.circle", title: policy.label, height: 32) {
+                    Recordings.Policy.allCases.map { option in
+                        .item(option.label, isOn: policy == option, id: "policy:\(option.rawValue)") {
+                            policy = option
+                            Recordings.policy = option
+                        }
                     }
-                    .labelsHidden().pickerStyle(.menu).controlSize(.small)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onChange(of: policy) { Recordings.policy = policy }
+                }
+                HStack(spacing: 8) {
+                    Toggle("Hide secrets", isOn: $redact).toggleStyle(.switch).controlSize(.mini)
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                        .onChange(of: redact) { Redaction.isOn = redact }
+                    Spacer()
+                    Button("Words…") { editingWords = true }.buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.brass)
+                        .help("Words to always hide, and ones never to hide")
                 }
                 Text(policy == .off
                      ? "Turn it on to keep a playable copy of what happens in your tabs, with every command marked on the timeline."
@@ -76,9 +87,10 @@ struct RecordingsView: View {
                     ForEach(shown) { info in
                         RecordingRow(info: info, isSelected: selection?.url == info.url, query: query)
                             .onTapGesture { selection = info }
-                            .contextMenu {
-                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([info.url]) }
-                                Button("Delete", role: .destructive) { delete(info) }
+                            .clavraContextMenu {
+                                [.item("Show in Finder", icon: "folder") { NSWorkspace.shared.activateFileViewerSelecting([info.url]) },
+                                 .divider("delete"),
+                                 .item("Delete", icon: "trash", tint: Theme.color(for: .production)) { delete(info) }]
                             }
                     }
                     if !loading, shown.isEmpty, !recordings.isEmpty {
@@ -104,6 +116,55 @@ struct RecordingsView: View {
         try? FileManager.default.removeItem(at: info.url)
         recordings.removeAll { $0.url == info.url }
         if selection?.url == info.url { selection = recordings.first }
+    }
+}
+
+/// Your own words to hide in recordings, and ones never to hide.
+private struct RedactionWords: View {
+    @State private var hide = Redaction.extraWords.joined(separator: "\n")
+    @State private var allow = Redaction.allowed.joined(separator: "\n")
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Hiding secrets in recordings").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+            Text("Passwords and tokens after = or :, --password, Authorization headers, passwords in URLs, mysql -p, GitHub, AWS, Slack, OpenAI and GitLab tokens, JWTs and private keys are hidden on their own. Each hidden character becomes •.")
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            box("Also hide, one per line", text: $hide, hint: "my-db-password\ninternal-host-name")
+            box("Never hide, one per line", text: $allow, hint: "public-demo-key")
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(QuietButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    Redaction.extraWords = hide.components(separatedBy: .newlines)
+                    Redaction.allowed = allow.components(separatedBy: .newlines)
+                    dismiss()
+                }
+                .buttonStyle(BrassButtonStyle()).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(width: 440)
+        .background(Theme.window)
+    }
+
+    private func box(_ title: String, text: Binding<String>, hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
+            TextEditor(text: text)
+                .font(.system(size: 12.5, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 86)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.field))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.line))
+                .overlay(alignment: .topLeading) {
+                    if text.wrappedValue.isEmpty {
+                        Text(hint).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.tertiary)
+                            .padding(.horizontal, 13).padding(.vertical, 8).allowsHitTesting(false)
+                    }
+                }
+        }
     }
 }
 
@@ -290,10 +351,22 @@ private struct Controls: View {
                 .font(.system(size: 11.5)).monospacedDigit().foregroundStyle(Theme.secondary)
             Slider(value: Binding(get: { player.position }, set: { player.seek(to: $0) }), in: 0...max(player.duration, 0.1))
                 .controlSize(.small)
-            Picker("", selection: Binding(get: { player.speed }, set: { player.speed = $0 })) {
-                ForEach([1.0, 2.0, 4.0, 8.0], id: \.self) { Text("\(Int($0))×").tag($0) }
+            MenuButton(minWidth: 120, alignRight: true) {
+                [1.0, 2.0, 4.0, 8.0].map { speed in
+                    .item("\(Int(speed))× speed", isOn: player.speed == speed, id: "speed:\(speed)") { player.speed = speed }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("\(Int(player.speed))×").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(Theme.secondary)
+                .padding(.horizontal, 9).frame(height: 24)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.card))
+                .contentShape(Rectangle())
             }
-            .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+            .fixedSize()
+            .help("Playback speed")
             Toggle("Skip pauses", isOn: Binding(get: { player.skipsPauses }, set: { player.skipsPauses = $0 }))
                 .toggleStyle(.checkbox).font(.system(size: 12)).foregroundStyle(Theme.secondary)
         }

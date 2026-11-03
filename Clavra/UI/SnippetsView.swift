@@ -31,9 +31,9 @@ struct SnippetsView: View {
                                 Text(snippet.command).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.secondary).lineLimit(2)
                             }
                         }
-                        .contextMenu {
-                            Button("Edit…") { editing = snippet }
-                            Button("Delete", role: .destructive) { model.snippets.delete(snippet) }
+                        .clavraContextMenu {
+                            [.item("Edit…", icon: "pencil") { editing = snippet },
+                             .item("Delete", icon: "trash", tint: Theme.color(for: .production)) { model.snippets.delete(snippet) }]
                         }
                     }
                 }

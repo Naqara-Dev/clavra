@@ -227,6 +227,18 @@ struct RootView: View {
                 model.sidePanel = .logs
             }
         }
+        // `-ClavraRightClickAt 90,820` right-clicks at that point of the window (from its bottom-left), for screenshots.
+        if let spec = UserDefaults.standard.string(forKey: "ClavraRightClickAt")?.split(separator: ",").compactMap({ Double($0) }), spec.count == 2 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+                for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x: spec[0], y: spec[1]), modifierFlags: [], timestamp: 0,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+            }
+        }
         // `-ClavraBackUpRun YES` presses "Back Up, Then Run" once it's offered; `-ClavraRestore YES`
         // then restores that backup a few seconds later.
         if UserDefaults.standard.bool(forKey: "ClavraBackUpRun") {

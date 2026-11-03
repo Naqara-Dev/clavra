@@ -29,6 +29,7 @@ enum CoreTests {
         sudoPrompts()
         newFeatures()
         downAlerts()
+        redaction()
         print(failures == 0 ? "✓ \(passes) checks passed" : "\(failures) of \(passes + failures) checks failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -491,5 +492,39 @@ enum CoreTests {
         check(tracker.record("web", up: false, at: t0.addingTimeInterval(120)) == nil, "down is said once")
         check(tracker.record("web", up: true, at: t0.addingTimeInterval(360)) == .cameBack(after: 300), "back, with how long it was down")
         check(tracker.record("web", up: true, at: t0.addingTimeInterval(420)) == nil, "back is said once")
+    }
+
+    static func redaction() {
+        func r(_ text: String, words: [String] = [], allow: [String] = []) -> String { Redaction.redact(text, words: words, allow: allow) }
+        check(r("export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz12") == "export GITHUB_TOKEN=" + String(repeating: "•", count: 32), "a token after =")
+        check(r("curl -H 'Authorization: Bearer abc123def456'").hasSuffix("Bearer ••••••••••••'"), "an Authorization header")
+        check(r("mysql -u root -pS3cret shop") == "mysql -u root -p•••••• shop", "mysql -p")
+        check(r("git clone https://amin:pa55w0rd@gitlab.example.com/x.git") == "git clone https://amin:••••••••@gitlab.example.com/x.git", "a password in a URL")
+        check(!r("token is eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghijkl").contains("eyJ"), "a JWT")
+        check(r("psql --password hunter2 db") == "psql --password ••••••• db", "--password")
+        check(r("ssh deploy@10.0.0.2 && ls -la") == "ssh deploy@10.0.0.2 && ls -la", "ordinary commands stay as they are")
+        check(r("[sudo] password for deploy: ") == "[sudo] password for deploy: ", "a password prompt isn't a secret")
+        check(r("echo my-db-pass-42", words: ["my-db-pass-42"]) == "echo " + String(repeating: "•", count: 13), "your own words")
+        check(r("API_KEY=public-demo-key", allow: ["public-demo-key"]) == "API_KEY=public-demo-key", "the allow list")
+        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----"
+        check(!r(pem).contains("b3Bl") && r(pem).contains("\n"), "a private key, keeping its lines")
+
+        // A whole recording: a token typed a key at a time is still hidden.
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "clavra-redact-\(UUID().uuidString).cast")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var text = #"{"version":2,"width":80,"height":24,"timestamp":1700000000,"title":"t"}"# + "\n"
+        var time = 0.1
+        for ch in "export TOKEN=ghp_abcdefghijklmnopqrstuvwxyz12\r\n" {
+            let piece = String(data: try! JSONSerialization.data(withJSONObject: [String(ch)]), encoding: .utf8)!.dropFirst().dropLast()
+            text += "[\(String(format: "%.3f", time)),\"o\",\(piece)]\n"
+            time += 0.05
+        }
+        text += #"[3.000,"m","export TOKEN=ghp_abcdefghijklmnopqrstuvwxyz12"]"# + "\n"
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+        Redaction.apply(to: url, words: [], allow: [])
+        let after = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        check(!after.contains("ghp_") && !after.contains("xyz12") && after.contains("\"redacted\":true"), "a recording keeps no secret, typed a key at a time")
+        check(after.contains(#""o","e"]"#) && after.contains("TOKEN="), "everything else is as it was")
+        check(Recordings.tape(at: url)?.events.count == 46, "and it still plays (46 pieces: Swift counts \\r\\n as one character): \(Recordings.tape(at: url)?.events.count ?? -1)")
     }
 }

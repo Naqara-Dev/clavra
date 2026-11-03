@@ -87,13 +87,21 @@ struct LogsPanel: View {
                 .padding(.horizontal, 8)
                 .frame(height: 26)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
-                Picker("", selection: Bindable(lens).minimum) {
-                    Text("All").tag(LogLens.Level.debug)
-                    Text("Info+").tag(LogLens.Level.info)
-                    Text("Warnings+").tag(LogLens.Level.warning)
-                    Text("Errors").tag(LogLens.Level.error)
+                MenuButton(minWidth: 150, alignRight: true) {
+                    [(LogLens.Level.debug, "All"), (.info, "Info and up"), (.warning, "Warnings and up"), (.error, "Errors only")].map { level, title in
+                        .item(title, isOn: lens.minimum == level, id: "level:\(level.rawValue)") { lens.minimum = level }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(["All", "Info+", "Warnings+", "Errors"][lens.minimum.rawValue]).font(.system(size: 11.5, weight: .medium))
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.secondary)
+                    .padding(.horizontal, 8).frame(height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field))
+                    .contentShape(Rectangle())
                 }
-                .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+                .fixedSize()
             }
         }
         .padding(.horizontal, 14)

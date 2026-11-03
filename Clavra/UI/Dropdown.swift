@@ -80,12 +80,93 @@ struct Dropdown: View {
     }
 }
 
+/// A button of any look that opens Clavra's list under it: the "+" and "…" menus.
+struct MenuButton<Label: View>: View {
+    var minWidth: CGFloat = 220
+    var alignRight = false
+    var entries: () -> [DropdownEntry]
+    @ViewBuilder var label: Label
+
+    @State private var menu = FloatingMenu()
+    @State private var anchor = AnchorBox()
+
+    var body: some View {
+        Button {
+            if menu.isOpen { return menu.close() }
+            guard let view = anchor.view else { return }
+            menu.show(entries(), below: view, minWidth: minWidth, alignRight: alignRight)
+        } label: {
+            label
+        }
+        .buttonStyle(.plain)
+        .background(AnchorReader(box: anchor))
+    }
+}
+
+extension View {
+    /// Right-click (or Control-click) opens Clavra's list here, instead of the system menu.
+    func clavraContextMenu(_ entries: @escaping () -> [DropdownEntry]) -> some View {
+        background(ContextAnchor(entries: entries))
+    }
+}
+
+private struct ContextAnchor: NSViewRepresentable {
+    var entries: () -> [DropdownEntry]
+
+    func makeNSView(context: Context) -> ContextAnchorView {
+        let view = ContextAnchorView()
+        view.entries = entries
+        return view
+    }
+
+    func updateNSView(_ view: ContextAnchorView, context: Context) { view.entries = entries }
+}
+
+/// Marks where a right-click opens a list. It never takes a click itself; one monitor finds the
+/// innermost marked view under the pointer.
+final class ContextAnchorView: NSView {
+    var entries: () -> [DropdownEntry] = { [] }
+    let list = FloatingMenu()
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { ContextMenus.watch(self) }
+    }
+}
+
+@MainActor enum ContextMenus {
+    private static let anchors = NSHashTable<ContextAnchorView>.weakObjects()
+    private static var monitor: Any?
+
+    static func watch(_ view: ContextAnchorView) {
+        anchors.add(view)
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { event in
+            guard event.type == .rightMouseDown || event.modifierFlags.contains(.control), let window = event.window else { return event }
+            // In window coordinates: the frame it's drawn in, cut to what its scroll view shows.
+            let hits = anchors.allObjects.filter { view in
+                guard view.window === window, !view.isHiddenOrHasHiddenAncestor else { return false }
+                // visibleRect can be the whole scroll view for SwiftUI's views; only where the two meet counts.
+                let shown = view.convert(view.bounds, to: nil).intersection(view.convert(view.visibleRect, to: nil))
+                return !shown.isEmpty && shown.contains(event.locationInWindow)
+            }
+            guard let best = hits.min(by: { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }) else { return event }
+            let entries = best.entries()
+            guard !entries.isEmpty else { return event }
+            best.list.show(entries, at: event.locationInWindow, in: window)
+            return nil
+        }
+    }
+}
+
 /// Lets SwiftUI hand over the NSView a dropdown hangs from.
 @MainActor final class AnchorBox {
     weak var view: NSView?
 }
 
-private struct AnchorReader: NSViewRepresentable {
+struct AnchorReader: NSViewRepresentable {
     var box: AnchorBox
 
     func makeNSView(context: Context) -> NSView {
@@ -112,23 +193,35 @@ private struct AnchorReader: NSViewRepresentable {
     @ObservationIgnored private var entries: [DropdownEntry] = []
     @ObservationIgnored private let state = DropdownState()
 
-    func show(_ entries: [DropdownEntry], below anchor: NSView) {
+    func show(_ entries: [DropdownEntry], below anchor: NSView, minWidth: CGFloat = 240, alignRight: Bool = false) {
         guard let window = anchor.window else { return }
+        let rect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        present(entries, from: rect, in: window, width: max(rect.width, minWidth), alignRight: alignRight) { event in
+            // A click on the button that opened it only closes it, like a menu.
+            event.window === window && anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil))
+        }
+    }
+
+    /// Opens at a point in `window`, for a right-click.
+    func show(_ entries: [DropdownEntry], at point: NSPoint, in window: NSWindow, width: CGFloat = 240) {
+        let rect = window.convertToScreen(NSRect(x: point.x, y: point.y, width: 0, height: 0))
+        present(entries, from: rect, in: window, width: width, alignRight: false) { _ in false }
+    }
+
+    private func present(_ entries: [DropdownEntry], from anchorRect: NSRect, in window: NSWindow, width: CGFloat, alignRight: Bool,
+                         swallow: @escaping (NSEvent) -> Bool) {
         close()
         self.entries = entries
         parent = window
         state.highlighted = entries.first { $0.kind == .item && $0.isOn }?.id
-
-        let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
-        let width = max(anchorRect.width, 240)
         let list = DropdownList(entries: entries, state: state, width: width) { [weak self] entry in self?.pick(entry) }
         let host = NSHostingView(rootView: list.environment(\.colorScheme, window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light))
         let size = host.fittingSize
 
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        var origin = NSPoint(x: anchorRect.minX, y: anchorRect.minY - 6 - size.height)
+        var origin = NSPoint(x: alignRight ? anchorRect.maxX - size.width : anchorRect.minX, y: anchorRect.minY - 6 - size.height)
         if origin.y < screen.minY + 8 { origin.y = anchorRect.maxY + 6 }
-        origin.x = min(origin.x, screen.maxX - size.width - 8)
+        origin.x = max(min(origin.x, screen.maxX - size.width - 8), screen.minX + 8)
 
         let panel = KeyPanel(contentRect: NSRect(origin: origin, size: size), styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
@@ -148,8 +241,7 @@ private struct AnchorReader: NSViewRepresentable {
             if event.type == .keyDown { return self.key(event) ? nil : event }
             if event.window !== panel {
                 self.close()
-                // A click on the field that opened it only closes it, like a menu.
-                return event.window === self.parent && anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil)) ? nil : event
+                return swallow(event) ? nil : event
             }
             return event
         }

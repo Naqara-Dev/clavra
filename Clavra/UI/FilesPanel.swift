@@ -75,13 +75,14 @@ struct FilesPanel: View {
                 Spacer()
                 iconButton("arrow.up", help: "Enclosing folder") { Task { await browser.up() } }
                 iconButton("arrow.clockwise", help: "Refresh") { Task { await browser.load() } }
-                Menu {
-                    Button("New Folder…") { newFolder = true }
-                    Button("New File…") { newFile = true }
+                MenuButton(minWidth: 180, alignRight: true) {
+                    [.item("New Folder…", icon: "folder.badge.plus") { newFolder = true },
+                     .item("New File…", icon: "doc.badge.plus") { newFile = true }]
                 } label: {
                     Image(systemName: "plus").font(.system(size: 11.5)).foregroundStyle(Theme.secondary).frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .fixedSize()
                 .help("New folder or file")
                 iconButton("square.and.arrow.up", help: "Upload files") { chooseUploads() }
                 iconButton(browser.showsHidden ? "eye" : "eye.slash", help: "Show hidden files") { browser.showsHidden.toggle() }
@@ -120,27 +121,28 @@ struct FilesPanel: View {
                             if entry.isFolder || entry.isLink { Task { await browser.open(entry) } } else { browser.edit(entry) }
                         }
                         .simultaneousGesture(TapGesture().onEnded { selection = entry.id })
-                        .contextMenu {
-                            if entry.isFolder {
-                                Button("Open") { Task { await browser.open(entry) } }
-                                Button("Download Folder") { browser.download(entry) }
-                            } else {
-                                Button("Edit on This Mac") { browser.edit(entry) }
-                                Button("Follow in Logs") { followLog(browser.join(entry.name)) }
-                                Button("Download") { browser.download(entry) }
-                            }
-                            Button("Copy Path") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(browser.join(entry.name), forType: .string)
-                            }
-                            Button("cd Here in Terminal") {
-                                let path = entry.isFolder ? browser.join(entry.name) : browser.path
-                                session.type("cd " + Self.quoted(path), run: true)
-                            }
-                            Divider()
-                            Button("Permissions…") { permissions = entry }
-                            Button("Rename…") { renaming = entry }
-                            Button("Delete…", role: .destructive) { deleting = entry }
+                        .clavraContextMenu {
+                            var items: [DropdownEntry] = entry.isFolder
+                                ? [.item("Open", icon: "folder") { Task { await browser.open(entry) } },
+                                   .item("Download Folder", icon: "arrow.down.circle") { browser.download(entry) }]
+                                : [.item("Edit on This Mac", icon: "pencil") { browser.edit(entry) },
+                                   .item("Follow in Logs", icon: "text.alignleft") { followLog(browser.join(entry.name)) },
+                                   .item("Download", icon: "arrow.down.circle") { browser.download(entry) }]
+                            items += [
+                                .item("Copy Path", icon: "doc.on.doc") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(browser.join(entry.name), forType: .string)
+                                },
+                                .item("cd Here in Terminal", icon: "terminal") {
+                                    let path = entry.isFolder ? browser.join(entry.name) : browser.path
+                                    session.type("cd " + Self.quoted(path), run: true)
+                                },
+                                .divider("change"),
+                                .item("Permissions…", icon: "lock") { permissions = entry },
+                                .item("Rename…", icon: "character.cursor.ibeam") { renaming = entry },
+                                .item("Delete…", icon: "trash", tint: Theme.color(for: .production)) { deleting = entry },
+                            ]
+                            return items
                         }
                 }
                 if !browser.loading, browser.error == nil, browser.visible.isEmpty, !browser.path.isEmpty {

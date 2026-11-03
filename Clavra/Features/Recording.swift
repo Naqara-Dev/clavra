@@ -185,10 +185,11 @@ final class SessionRecorder: @unchecked Sendable {
         }
     }
 
-    /// A command was run: a marker on the timeline.
+    /// A command was run: a marker on the timeline, with any secret in it hidden.
     func marker(_ command: String) {
         let time = elapsed
-        queue.async { [self] in event(time, "m", command) }
+        let shown = Redaction.isOn ? Redaction.redact(command) : command
+        queue.async { [self] in event(time, "m", shown) }
     }
 
     func resize(cols: Int, rows: Int) {
@@ -196,8 +197,14 @@ final class SessionRecorder: @unchecked Sendable {
         queue.async { [self] in event(time, "r", "\(cols)x\(rows)") }
     }
 
+    /// Closes the file, then hides the secrets in it.
     func close() {
-        queue.async { [self] in try? handle.close() }
+        let url = url
+        let redact = Redaction.isOn
+        queue.async { [self] in
+            try? handle.close()
+            if redact { Redaction.apply(to: url) }
+        }
     }
 
     private var elapsed: Double { (Date.now.timeIntervalSince(started) * 1000).rounded() / 1000 }
@@ -240,5 +247,140 @@ final class SessionRecorder: @unchecked Sendable {
             return bytes.count - index < needs ? index : bytes.count
         }
         return bytes.count
+    }
+}
+
+/// Secrets kept out of recordings: tokens, passwords in `KEY=…` and `--password …`, credentials in
+/// URLs and headers, private keys, and words of your own. Each hidden character becomes `•`, so
+/// the screen keeps its shape when played back. Words on the allow list are left as they are.
+enum Redaction {
+    static var isOn: Bool {
+        get { UserDefaults.standard.object(forKey: "RedactRecordings") == nil || UserDefaults.standard.bool(forKey: "RedactRecordings") }
+        set { UserDefaults.standard.set(newValue, forKey: "RedactRecordings") }
+    }
+
+    /// Hidden wherever they appear, one per line in Recordings.
+    static var extraWords: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "RedactWords") ?? [] }
+        set { UserDefaults.standard.set(newValue.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, forKey: "RedactWords") }
+    }
+
+    /// Never hidden, even when they look like a secret.
+    static var allowed: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "RedactAllow") ?? [] }
+        set { UserDefaults.standard.set(newValue.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, forKey: "RedactAllow") }
+    }
+
+    /// Each pattern, and which capture group is the secret (0: all of it).
+    private static let patterns: [(NSRegularExpression, Int)] = [
+        (#"(?i)\b(?:pass(?:word|wd|phrase)?|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|credentials?|private[_-]?key)\w*\s*[=:]\s*["']?([^\s"'`;&|]+)"#, 1),
+        (#"(?i)--(?:password|passwd|token|secret|api-key|access-key)(?:=|\s+)["']?([^\s"']+)"#, 1),
+        (#"\bmysql(?:dump)?\b[^\n]*?\s-p([^\s]+)"#, 1),
+        (#"://[^/\s:@]+:([^/\s@]+)@"#, 1),
+        (#"(?i)\bauthorization:\s*(?:bearer\s+|basic\s+|token\s+)?([^\s"']+)"#, 1),
+        (#"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[bpas]-[\w-]{10,}|sk-[A-Za-z0-9_-]{20,}|sk_live_\w{10,}|glpat-[\w-]{20,})"#, 0),
+        (#"\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}"#, 0),
+        (#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"#, 0),
+    ].compactMap { pattern, group in (try? NSRegularExpression(pattern: pattern)).map { ($0, group) } }
+
+    /// Where the secrets are in `text`, as UTF-16 ranges.
+    static func ranges(in text: String, words: [String] = extraWords, allow: [String] = allowed) -> [NSRange] {
+        let ns = text as NSString
+        let all = NSRange(location: 0, length: ns.length)
+        var found: [NSRange] = []
+        for (regex, group) in patterns {
+            for match in regex.matches(in: text, range: all) {
+                let range = match.range(at: group)
+                guard range.location != NSNotFound, range.length > 0 else { continue }
+                let value = ns.substring(with: range)
+                if allow.contains(where: { !$0.isEmpty && value.contains($0) }) { continue }
+                found.append(range)
+            }
+        }
+        for word in words where !word.isEmpty && !allow.contains(word) {
+            var search = all
+            while true {
+                let range = ns.range(of: word, options: [], range: search)
+                guard range.location != NSNotFound else { break }
+                found.append(range)
+                search = NSRange(location: range.upperBound, length: all.upperBound - range.upperBound)
+            }
+        }
+        return found
+    }
+
+    /// `text` with every secret character turned to `•` (spaces and line breaks kept).
+    static func redact(_ text: String, words: [String] = extraWords, allow: [String] = allowed) -> String {
+        let found = ranges(in: text, words: words, allow: allow)
+        guard !found.isEmpty else { return text }
+        var units = Array(text.utf16)
+        let dot = "•".utf16.first!
+        for range in found {
+            for i in range.location..<min(range.upperBound, units.count) where !isBlank(units[i]) { units[i] = dot }
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
+
+    private static func isBlank(_ unit: UInt16) -> Bool { unit == 0x20 || unit == 0x0A || unit == 0x0D || unit == 0x09 }
+
+    /// Hides the secrets in a finished recording, across the chunks output arrived in (a token
+    /// typed a key at a time is still one token). Marks the file done so it isn't read twice.
+    static func apply(to url: URL, words: [String] = extraWords, allow: [String] = allowed) {
+        guard let data = try? Data(contentsOf: url) else { return }
+        var lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true).map { Data($0) }
+        guard let first = lines.first, var header = try? JSONSerialization.jsonObject(with: first) as? [String: Any] else { return }
+        var clavra = header["clavra"] as? [String: Any] ?? [:]
+        if clavra["redacted"] as? Bool == true { return }
+
+        // Output events, joined, with where each one starts.
+        var events: [(line: Int, time: Double, type: String, text: String)] = []
+        for (index, line) in lines.enumerated().dropFirst() {
+            guard let event = try? JSONSerialization.jsonObject(with: line) as? [Any], event.count == 3,
+                  let time = event[0] as? Double, let type = event[1] as? String, let text = event[2] as? String else { continue }
+            events.append((index, time, type, text))
+        }
+        let outputs = events.filter { $0.type == "o" }
+        let joined = outputs.map(\.text).joined()
+        var units = Array(joined.utf16)
+        let dot = "•".utf16.first!
+        for range in ranges(in: joined, words: words, allow: allow) {
+            for i in range.location..<min(range.upperBound, units.count) where !isBlank(units[i]) { units[i] = dot }
+        }
+        var offset = 0
+        for event in events {
+            let text: String
+            if event.type == "o" {
+                let count = event.text.utf16.count
+                text = String(decoding: units[offset..<offset + count], as: UTF16.self)
+                offset += count
+            } else if event.type == "m" {
+                text = redact(event.text, words: words, allow: allow)
+            } else {
+                continue
+            }
+            if let encoded = try? JSONSerialization.data(withJSONObject: [text], options: [.withoutEscapingSlashes]) {
+                var line = Data("[\(String(format: "%.3f", event.time)),\"\(event.type)\",".utf8)
+                line.append(encoded.dropFirst().dropLast())
+                line.append(UInt8(ascii: "]"))
+                lines[event.line] = line
+            }
+        }
+        clavra["redacted"] = true
+        header["clavra"] = clavra
+        guard let newHeader = try? JSONSerialization.data(withJSONObject: header, options: [.withoutEscapingSlashes]) else { return }
+        lines[0] = newHeader
+        var out = Data()
+        for line in lines { out.append(line); out.append(UInt8(ascii: "\n")) }
+        try? out.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Recordings a crash or a forced quit left unfinished: hidden now.
+    static func catchUp() {
+        guard isOn else { return }
+        let files = FileManager.default.enumerator(at: Recordings.folder, includingPropertiesForKeys: nil)
+        while let url = files?.nextObject() as? URL {
+            if url.pathExtension == "cast" { apply(to: url) }
+        }
     }
 }

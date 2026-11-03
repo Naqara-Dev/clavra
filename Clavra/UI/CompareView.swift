@@ -96,10 +96,14 @@ struct CompareView: View {
     }
 
     private func hostPicker(_ id: Binding<String>) -> some View {
-        Picker("", selection: id) {
-            ForEach(hosts) { host in Text("\(host.title)  ·  \(host.place.label)").tag(host.id.uuidString) }
+        let chosen = model.store.host(UUID(uuidString: id.wrappedValue) ?? UUID())
+        return Dropdown(icon: "server.rack", title: chosen?.title ?? "Pick a host", detail: chosen.map { model.resolved($0).target },
+                        placeholder: chosen == nil) {
+            hosts.map { host in
+                .item(host.title, detail: "\(model.resolved(host).target) · \(host.place.label)", isOn: host.id.uuidString == id.wrappedValue,
+                      id: "host:\(host.id)") { id.wrappedValue = host.id.uuidString }
+            }
         }
-        .labelsHidden()
         .frame(maxWidth: .infinity)
     }
 

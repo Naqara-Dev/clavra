@@ -26,14 +26,18 @@ private struct TabStrip: View {
                 HStack(spacing: 6) {
                     ForEach(model.tabs) { tab in
                         TabPill(tab: tab, model: model, isFront: tab.id == model.selection)
-                            .contextMenu {
+                            .clavraContextMenu {
+                                var items: [DropdownEntry] = []
                                 if let session = model.session(tab.focused) {
-                                    Button("Duplicate Tab") { model.open(session.server, through: session.jumpServer) }
-                                    Button("Reconnect") { session.connect() }
+                                    items += [.item("Duplicate Tab", icon: "plus.square.on.square") { model.open(session.server, through: session.jumpServer) },
+                                              .item("Reconnect", icon: "arrow.clockwise") { session.connect() },
+                                              .divider("close")]
                                 }
-                                Divider()
-                                Button("Close Other Tabs") { model.closeOthers(than: tab.id) }
-                                Button("Close Tab") { model.closeTab(tab.id) }
+                                if model.tabs.count > 1 {
+                                    items.append(.item("Close Other Tabs", icon: "xmark.square") { model.closeOthers(than: tab.id) })
+                                }
+                                items.append(.item("Close Tab", icon: "xmark") { model.closeTab(tab.id) })
+                                return items
                             }
                     }
                 }
@@ -642,12 +646,11 @@ private struct BackupsMenu: View {
     @State private var restoring: Session.Backup?
 
     var body: some View {
-        Menu {
-            ForEach(session.backups) { backup in
-                Section("\(backup.command) · \(backup.made.formatted(date: .omitted, time: .shortened))") {
-                    Button("Restore…") { restoring = backup }
-                    Button("Delete Backup", role: .destructive) { session.forget(backup) }
-                }
+        MenuButton(minWidth: 280) {
+            session.backups.flatMap { backup -> [DropdownEntry] in
+                [.heading("\(backup.command) · \(backup.made.formatted(date: .omitted, time: .shortened))"),
+                 .item("Restore…", icon: "arrow.uturn.backward", id: "restore:\(backup.id)") { restoring = backup },
+                 .item("Delete Backup", icon: "trash", tint: Theme.color(for: .production), id: "forget:\(backup.id)") { session.forget(backup) }]
             }
         } label: {
             HStack(spacing: 5) {
@@ -655,8 +658,9 @@ private struct BackupsMenu: View {
                 Text("Backups \(session.backups.count)")
             }
             .foregroundStyle(Theme.brass)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .fixedSize()
         .help("Put back what a command removed or changed")
         .confirmationDialog(restoring.map { "Restore what ‘\($0.command)’ touched?" } ?? "",
                             isPresented: Binding(get: { restoring != nil }, set: { if !$0 { restoring = nil } }), presenting: restoring) { backup in

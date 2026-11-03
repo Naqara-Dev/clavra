@@ -716,7 +716,7 @@ final class Session: Identifiable {
             let line = logicalLine()
             if sudoPrompt == nil, let command = PromptLine.command(in: line, strict: true)?.trimmingCharacters(in: .whitespaces),
                !command.isEmpty {
-                if !CommandHistory.looksSecret(command) { recorder?.marker(command) }
+                if Redaction.isOn || !CommandHistory.looksSecret(command) { recorder?.marker(command) }
                 running = (command, .now)
             }
             lastCommand = sudoPrompt != nil || SudoFill.isPrompt(line, after: lastCommand) ? nil : (PromptLine.command(in: line, strict: true) ?? typed.text)
@@ -843,7 +843,7 @@ final class Session: Identifiable {
         if run, needsPhoneApproval, !fromPhone { return }
         self.held = nil
         if run {
-            if !CommandHistory.looksSecret(held.command) { recorder?.marker(held.command) }
+            if Redaction.isOn || !CommandHistory.looksSecret(held.command) { recorder?.marker(held.command) }
             running = (held.command, .now)
             if held.bytes == [0x0D] { remember(held.command) }
             typed.feed(held.bytes[...])

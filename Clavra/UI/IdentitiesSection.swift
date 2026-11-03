@@ -69,13 +69,13 @@ private struct IdentityRow: View {
                 .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 .help(hosts.map(\.title).joined(separator: ", "))
             Button("Edit", action: edit).buttonStyle(QuietButtonStyle())
-            Menu {
-                Button("Delete…", role: .destructive) { confirming = true }
+            MenuButton(minWidth: 160, alignRight: true) {
+                [.item("Delete…", icon: "trash", tint: Theme.color(for: .production)) { confirming = true }]
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 12)).foregroundStyle(Theme.secondary)
                     .frame(width: 24, height: 24).contentShape(Rectangle())
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            .fixedSize()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

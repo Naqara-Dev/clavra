@@ -59,7 +59,10 @@ final class AppModel {
             guard let self, let session = self.session(id) else { return }
             self.focus(session)
         }
-        Task.detached(priority: .background) { Recordings.prune() }
+        Task.detached(priority: .background) {
+            Recordings.prune()
+            Redaction.catchUp()
+        }
         remote.model = self
         // With iCloud Drive, pick up what other Macs changed every half minute while open.
         Task { [weak self] in

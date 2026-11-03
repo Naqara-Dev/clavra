@@ -129,14 +129,14 @@ struct HomeView: View {
                     }
                     ForEach(model.quickHistory.targets.prefix(6), id: \.self) { target in
                         QuickChip(target: target) { model.quickConnect(target) }
-                            .contextMenu {
-                                Button("Save as Host…") { model.saveFromHistory(target) }
-                                Button("Copy") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(target, forType: .string)
-                                }
-                                Divider()
-                                Button("Remove from Recent", role: .destructive) { model.quickHistory.remove(target) }
+                            .clavraContextMenu {
+                                [.item("Save as Host…", icon: "square.and.arrow.down") { model.saveFromHistory(target) },
+                                 .item("Copy", icon: "doc.on.doc") {
+                                     NSPasteboard.general.clearContents()
+                                     NSPasteboard.general.setString(target, forType: .string)
+                                 },
+                                 .divider("remove"),
+                                 .item("Remove from Recent", icon: "xmark", tint: Theme.color(for: .production)) { model.quickHistory.remove(target) }]
                             }
                     }
                 }
@@ -153,13 +153,14 @@ struct HomeView: View {
             HStack(alignment: .firstTextBaseline) {
                 heading(query.isEmpty ? "All hosts" : "Matching “\(query)”")
                 Spacer()
-                Menu {
-                    Button("New Host…") { model.newHost() }
-                    Button("Import from ~/.ssh/config") { model.importing = true }
+                MenuButton(alignRight: true) {
+                    [.item("New Host…", icon: "plus") { model.newHost() },
+                     .item("Import from ~/.ssh/config", icon: "square.and.arrow.down") { model.importing = true }]
                 } label: {
                     Label("Add", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .fixedSize()
             }
             .padding(.top, 28)
 
@@ -280,7 +281,7 @@ private struct HomeRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { connect() }
-        .contextMenu { menuItems }
+        .clavraContextMenu { menuItems }
         .help(server.notes)
     }
 
@@ -301,11 +302,11 @@ private struct HomeRow: View {
         HStack(spacing: 2) {
             icon("checkmark.shield", help: "Test Connection", action: runTest).disabled(test == .running)
             icon("slider.horizontal.3", help: "Edit") { model.editing = server }
-            Menu { menuItems } label: {
+            MenuButton(alignRight: true) { menuItems } label: {
                 Image(systemName: "ellipsis").font(.system(size: 12)).foregroundStyle(Theme.secondary)
                     .frame(width: 26, height: 26).contentShape(Rectangle())
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            .fixedSize()
             .help("More")
             Button(openSession == nil ? "Connect" : "Show", action: connect)
                 .buttonStyle(BrassButtonStyle())
@@ -313,19 +314,19 @@ private struct HomeRow: View {
         }
     }
 
-    @ViewBuilder private var menuItems: some View {
-        Button("Connect") { connect() }
-        Button("Open in New Tab") { model.open(server) }
-        Button("Test Connection", action: runTest)
-        Button("Edit…") { model.editing = server }
-        Divider()
-        Button("Duplicate") { model.store.save(server.duplicate()) }
-        Button("Copy ssh Command") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(model.sshCommand(for: server), forType: .string)
-        }
-        Divider()
-        Button("Delete", role: .destructive) { model.store.delete(server) }
+    private var menuItems: [DropdownEntry] {
+        [.item(openSession == nil ? "Connect" : "Show", icon: "arrow.right.circle") { connect() },
+         .item("Open in New Tab", icon: "plus.rectangle.on.rectangle") { model.open(server) },
+         .item("Test Connection", icon: "checkmark.shield", action: runTest),
+         .item("Edit…", icon: "slider.horizontal.3") { model.editing = server },
+         .divider("more"),
+         .item("Duplicate", icon: "plus.square.on.square") { model.store.save(server.duplicate()) },
+         .item("Copy ssh Command", icon: "doc.on.doc") {
+             NSPasteboard.general.clearContents()
+             NSPasteboard.general.setString(model.sshCommand(for: server), forType: .string)
+         },
+         .divider("delete"),
+         .item("Delete", icon: "trash", tint: Theme.color(for: .production)) { model.store.delete(server) }]
     }
 
     private func connect() {

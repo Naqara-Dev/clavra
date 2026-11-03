@@ -127,22 +127,23 @@ private struct ForwardRow: View {
                 Text(verbatim: item.forward.summary).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.ink)
                     .lineLimit(1).truncationMode(.middle)
                 Spacer()
-                Menu {
+                MenuButton(minWidth: 200, alignRight: true) {
+                    var items: [DropdownEntry] = []
                     if case .open = item.status, item.forward.kind == .local, let url = URL(string: "http://localhost:\(item.forward.localPort)") {
-                        Button("Open in Browser") { NSWorkspace.shared.open(url) }
-                        Button("Copy Address") {
+                        items.append(.item("Open in Browser", icon: "safari") { NSWorkspace.shared.open(url) })
+                        items.append(.item("Copy Address", icon: "doc.on.doc") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString("localhost:\(item.forward.localPort)", forType: .string)
-                        }
+                        })
                     }
-                    if !saved { Button("Open Every Time", action: keep) }
-                    Divider()
-                    Button("Close", action: close)
+                    if !saved { items.append(.item("Open Every Time", icon: "pin", action: keep)) }
+                    if !items.isEmpty { items.append(.divider("close")) }
+                    items.append(.item("Close", icon: "xmark", tint: Theme.color(for: .production), action: close))
+                    return items
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 11)).foregroundStyle(Theme.secondary).frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
                 .menuIndicator(.hidden)
                 .fixedSize()
             }

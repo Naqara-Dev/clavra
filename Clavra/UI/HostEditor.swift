@@ -452,11 +452,10 @@ private struct LabelPicker: View {
                     LabelChip(title: choice.label, tint: Theme.color(for: choice), isOn: labels.resolve(place) == choice) {
                         place = choice
                     }
-                    .contextMenu {
-                        if let custom = labels.label(for: choice) {
-                            Button("Edit Label…") { draft = custom; isNewDraft = false }
-                            Button("Delete Label", role: .destructive) { remove(custom) }
-                        }
+                    .clavraContextMenu {
+                        guard let custom = labels.label(for: choice) else { return [] }
+                        return [.item("Edit Label…", icon: "pencil") { draft = custom; isNewDraft = false },
+                                .item("Delete Label", icon: "trash", tint: Theme.color(for: .production)) { remove(custom) }]
                     }
                 }
                 Button {

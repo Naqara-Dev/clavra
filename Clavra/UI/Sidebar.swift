@@ -30,14 +30,19 @@ struct Sidebar: View {
     private var sections: [HostSection] { HostSection.make(model.store.grouped(matching: query), by: grouping) }
 
     /// Group by, and fold or unfold every group: in the "+" menu and on each group's header.
-    @ViewBuilder private var viewMenu: some View {
-        Picker("Group By", selection: $grouping) {
-            ForEach(Grouping.allCases, id: \.self) { Text($0.label).tag($0) }
+    private var viewMenu: [DropdownEntry] {
+        var entries: [DropdownEntry] = [.heading("Group by")]
+        entries += Grouping.allCases.map { option in
+            .item(option.label, isOn: grouping == option, id: "group:\(option.rawValue)") { grouping = option }
         }
-        Button("Collapse All Groups") { collapsedText = sections.map(\.id).joined(separator: "\n") }
-            .disabled(grouping == .none)
-        Button("Expand All Groups") { collapsedText = "" }
-            .disabled(collapsedText.isEmpty)
+        if grouping != .none || !collapsedText.isEmpty { entries.append(.divider("folds")) }
+        if grouping != .none {
+            entries.append(.item("Collapse All Groups", icon: "chevron.up") { collapsedText = sections.map(\.id).joined(separator: "\n") })
+        }
+        if !collapsedText.isEmpty {
+            entries.append(.item("Expand All Groups", icon: "chevron.down") { collapsedText = "" })
+        }
+        return entries
     }
 
     var body: some View {
@@ -54,18 +59,17 @@ struct Sidebar: View {
                 .frame(height: 30)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
 
-                Menu {
-                    Button("New Host…") { model.newHost() }
-                    Button("Import from ~/.ssh/config") { model.importing = true }
-                    Divider()
-                    viewMenu
+                MenuButton(minWidth: 270) {
+                    [.item("New Host…", icon: "plus") { model.newHost() },
+                     .item("Import from ~/.ssh/config", icon: "square.and.arrow.down") { model.importing = true },
+                     .divider("view")] + viewMenu
                 } label: {
                     Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary)
                         .frame(width: 30, height: 30)
                         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
                         .contentShape(Rectangle())
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .fixedSize()
                 .help("New host or import (⌘N)")
             }
             .padding(.horizontal, 10)
@@ -78,7 +82,7 @@ struct Sidebar: View {
                         GroupHeader(section: section, isOpen: isOpen) {
                             withAnimation(.easeOut(duration: 0.18)) { toggle(section.id) }
                         }
-                        .contextMenu { viewMenu }
+                        .clavraContextMenu { viewMenu }
                         if isOpen {
                             ForEach(section.servers) { server in
                                 HostRow(server: server, model: model)
@@ -218,16 +222,16 @@ private struct HostRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(server.notes)
-        .contextMenu {
-            Button("Open in New Tab") { model.open(server) }
-            Button("Edit…") { model.editing = server }
-            Button("Duplicate") { model.store.save(server.duplicate()) }
-            Button("Copy ssh Command") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(model.sshCommand(for: server), forType: .string)
-            }
-            Divider()
-            Button("Delete", role: .destructive) { model.store.delete(server) }
+        .clavraContextMenu {
+            [.item("Open in New Tab", icon: "plus.rectangle.on.rectangle") { model.open(server) },
+             .item("Edit…", icon: "slider.horizontal.3") { model.editing = server },
+             .item("Duplicate", icon: "plus.square.on.square") { model.store.save(server.duplicate()) },
+             .item("Copy ssh Command", icon: "doc.on.doc") {
+                 NSPasteboard.general.clearContents()
+                 NSPasteboard.general.setString(model.sshCommand(for: server), forType: .string)
+             },
+             .divider("delete"),
+             .item("Delete", icon: "trash", tint: Theme.color(for: .production)) { model.store.delete(server) }]
         }
     }
 }

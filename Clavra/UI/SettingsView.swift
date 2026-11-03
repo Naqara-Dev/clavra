@@ -105,6 +105,7 @@ private struct TerminalSettings: View {
     @State private var suggest = CommandHistory.isEnabled
     @State private var forgotten = false
     @State private var recording = Recordings.policy
+    @State private var redact = Redaction.isOn
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -134,11 +135,19 @@ private struct TerminalSettings: View {
             .disabled(forgotten)
 
             VStack(alignment: .leading, spacing: 5) {
-                Picker("Record sessions", selection: $recording) {
-                    ForEach(Recordings.Policy.allCases, id: \.self) { Text($0.label).tag($0) }
+                Text("Record sessions").font(.system(size: 13, weight: .medium))
+                Dropdown(icon: "record.circle", title: recording.label, height: 32) {
+                    Recordings.Policy.allCases.map { option in
+                        .item(option.label, isOn: recording == option, id: "policy:\(option.rawValue)") {
+                            recording = option
+                            Recordings.policy = option
+                        }
+                    }
                 }
-                .font(.system(size: 13, weight: .medium))
-                .onChange(of: recording) { Recordings.policy = recording }
+                .frame(width: 320)
+                Toggle("Hide passwords, tokens and keys in recordings", isOn: $redact).toggleStyle(.checkbox)
+                    .font(.system(size: 12.5))
+                    .onChange(of: redact) { Redaction.isOn = redact }
                 Text("A playable copy of each tab, with every command marked on the timeline, in Recordings (⌥⌘4). Kept on this Mac only, readable only by you, removed after \(Recordings.keepDays) days. Files are asciinema .cast files.")
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             }

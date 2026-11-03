@@ -114,25 +114,29 @@ private struct KeyCard: View {
                         .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 }
                 Spacer()
-                Menu {
+                MenuButton(alignRight: true) {
+                    var items: [DropdownEntry] = []
                     if let publicKey = key.publicKey {
-                        Button("Copy Public Key") {
+                        items.append(.item("Copy Public Key", icon: "doc.on.doc") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(publicKey, forType: .string)
-                        }
+                        })
                     }
-                    if !live.isEmpty, key.publicKey != nil {
-                        Menu("Install on Server") {
-                            ForEach(live) { session in Button(session.server.title) { install(session) } }
-                        }
-                    }
-                    Button("Show in Finder") {
+                    items.append(.item("Show in Finder", icon: "folder") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: Credentials.expand(key.path))])
+                    })
+                    if !live.isEmpty, key.publicKey != nil {
+                        items.append(.heading("Install on server"))
+                        items += live.map { session in
+                            .item(session.server.title, detail: session.server.target, icon: "arrow.up.doc", id: "install:\(session.id)") { install(session) }
+                        }
                     }
+                    return items
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .fixedSize()
             }
 
             if let fingerprint = key.fingerprint {
