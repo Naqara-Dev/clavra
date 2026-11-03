@@ -12,9 +12,9 @@ enum Recordings {
 
         var label: String {
             switch self {
-            case .off: "Off"
-            case .production: "Hosts that ask before risky commands"
-            case .all: "Every host"
+            case .off: "Only when I press Record"
+            case .production: "Always: hosts that ask before risky commands"
+            case .all: "Always: every host"
             }
         }
     }

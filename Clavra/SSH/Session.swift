@@ -129,10 +129,12 @@ final class Session: Identifiable {
     @ObservationIgnored private var impactTask: Task<Void, Never>?
     /// Writes this tab down when recording is on for its host. One file per connect.
     @ObservationIgnored private var recorder: SessionRecorder? {
-        didSet { isRecording = recorder != nil }
+        didSet { recordingSince = recorder.map { _ in .now } }
     }
     /// This tab is being written down.
-    private(set) var isRecording = false
+    var isRecording: Bool { recordingSince != nil }
+    /// When this recording started, for the clock in the status line.
+    private(set) var recordingSince: Date?
     /// The bell rang while this tab wasn't in front.
     var wantsAttention = false
     /// Typed bytes, handed on so they can go to other tabs too (broadcast).
@@ -468,7 +470,24 @@ final class Session: Identifiable {
     }
 
     private func show(_ bytes: [UInt8]) {
-        terminal.feed(byteArray: bytes[...])
+        if let pending = markAfterEcho {
+            if let end = bytes.firstIndex(where: { $0 == 0x0D || $0 == 0x0A }) {
+                // The line as the shell finished echoing it, just before its newline.
+                markAfterEcho = nil
+                terminal.feed(byteArray: bytes[..<end])
+                let echoed = PromptLine.command(in: logicalLine(), strict: true)?.trimmingCharacters(in: .whitespaces)
+                mark(echoed.flatMap { $0.isEmpty ? nil : $0 } ?? pending.fallback)
+                terminal.feed(byteArray: bytes[end...])
+            } else {
+                if Date.now.timeIntervalSince(pending.since) > 2 {
+                    markAfterEcho = nil
+                    mark(pending.fallback)
+                }
+                terminal.feed(byteArray: bytes[...])
+            }
+        } else {
+            terminal.feed(byteArray: bytes[...])
+        }
         recorder?.output(bytes)
         refreshSuggestion()
         checkSudo()
@@ -476,9 +495,49 @@ final class Session: Identifiable {
         onScreen?()
     }
 
+    /// Return was pressed while recording: what was on the line then, if the echo never comes.
+    @ObservationIgnored private var markAfterEcho: (since: Date, fallback: String?)?
+
+    private func mark(_ command: String?) {
+        guard let command, !command.isEmpty, Redaction.isOn || !CommandHistory.looksSecret(command) else { return }
+        recorder?.marker(command)
+    }
+
     private func stopRecording() {
+        markAfterEcho = nil
         recorder?.close()
         recorder = nil
+    }
+
+    /// Record pressed: from here on this tab is written down, starting with what's on screen now.
+    func startRecording() {
+        guard isLive, recorder == nil else { return }
+        let screen = terminal.getTerminal()
+        guard let recorder = SessionRecorder(server: server, cols: screen.cols, rows: screen.rows) else {
+            say("Couldn't start recording: the Recordings folder can't be written to.")
+            return
+        }
+        recorder.output(Array(Self.snapshot(of: screen).utf8))
+        self.recorder = recorder
+    }
+
+    /// Stop pressed: the recording is finished and shows up in Recordings.
+    func finishRecording() {
+        guard recorder != nil else { return }
+        stopRecording()
+        say("Recording saved. Find it in Recordings (⌥⌘4).")
+    }
+
+    /// The screen as plain text with the cursor where it is, so a recording started partway through
+    /// doesn't begin blank. Colors aren't kept; everything after this is exact.
+    static func snapshot(of screen: Terminal) -> String {
+        var lines: [String] = []
+        for row in 0..<screen.rows {
+            lines.append(screen.getLine(row: row)?.translateToString(trimRight: true) ?? "")
+        }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        let cursor = screen.getCursorLocation()
+        return "\u{1b}[0m\u{1b}[2J\u{1b}[H" + lines.joined(separator: "\r\n") + "\u{1b}[\(cursor.y + 1);\(cursor.x + 1)H"
     }
 
 
@@ -714,9 +773,13 @@ final class Session: Identifiable {
         if pressesReturn {
             // A password typed at sudo's own prompt is never kept as the "last command".
             let line = logicalLine()
+            // The timeline marker waits for the shell to echo the whole line: typed or pasted
+            // faster than the echo, the end of the command isn't on screen yet.
+            if recorder != nil, sudoPrompt == nil {
+                markAfterEcho = (since: .now, fallback: PromptLine.command(in: line, strict: true)?.trimmingCharacters(in: .whitespaces))
+            }
             if sudoPrompt == nil, let command = PromptLine.command(in: line, strict: true)?.trimmingCharacters(in: .whitespaces),
                !command.isEmpty {
-                if Redaction.isOn || !CommandHistory.looksSecret(command) { recorder?.marker(command) }
                 running = (command, .now)
             }
             lastCommand = sudoPrompt != nil || SudoFill.isPrompt(line, after: lastCommand) ? nil : (PromptLine.command(in: line, strict: true) ?? typed.text)

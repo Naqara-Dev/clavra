@@ -599,12 +599,8 @@ private struct StatusLine: View {
             if !session.backups.isEmpty {
                 BackupsMenu(session: session)
             }
-            if session.isRecording {
-                HStack(spacing: 5) {
-                    Circle().fill(Theme.color(for: .production)).frame(width: 6, height: 6)
-                    Text("rec")
-                }
-                .help("This tab is being recorded (Recordings, ⌥⌘4)")
+            if session.isLive || session.isRecording {
+                RecordButton(session: session)
             }
             Spacer()
             if session.isLive {
@@ -1011,5 +1007,44 @@ final class TerminalHost: NSView {
               bounds.width >= Self.smallest.width, bounds.height >= Self.smallest.height,
               terminal.frame != bounds else { return }
         terminal.frame = bounds
+    }
+}
+
+/// Start and stop recording this tab. While it records: a red dot, the time so far, and Stop.
+private struct RecordButton: View {
+    var session: Session
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            session.isRecording ? session.finishRecording() : session.startRecording()
+        } label: {
+            HStack(spacing: 5) {
+                if let since = session.recordingSince {
+                    Image(systemName: hovering ? "stop.fill" : "circle.fill")
+                        .font(.system(size: hovering ? 7.5 : 6.5)).foregroundStyle(Theme.color(for: .production))
+                    TimelineView(.periodic(from: since, by: 1)) { context in
+                        Text(Self.clock(context.date.timeIntervalSince(since))).monospacedDigit()
+                    }
+                    .foregroundStyle(Theme.color(for: .production))
+                    if hovering { Text("Stop") }
+                } else {
+                    Image(systemName: "record.circle").font(.system(size: 10.5))
+                    Text("Record")
+                }
+            }
+            .foregroundStyle(hovering ? Theme.ink : Theme.tertiary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(hovering ? Theme.card : .clear))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(session.isRecording ? "Stop recording; it's kept in Recordings (⌥⌘R)" : "Record this tab from now on (⌥⌘R)")
+    }
+
+    static func clock(_ seconds: TimeInterval) -> String {
+        let s = max(Int(seconds), 0)
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 }

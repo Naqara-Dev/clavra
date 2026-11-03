@@ -1,6 +1,7 @@
 import AppKit
 import SwiftTerm
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Recorded sessions: pick one, then play it back, scrub through it, or jump straight to a command.
 struct RecordingsView: View {
@@ -12,6 +13,7 @@ struct RecordingsView: View {
     @State private var policy = Recordings.policy
     @State private var redact = Redaction.isOn
     @State private var editingWords = false
+    private var exports = VideoExports.shared
 
     private var shown: [Recordings.Info] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -71,8 +73,8 @@ struct RecordingsView: View {
                         .help("Words to always hide, and ones never to hide")
                 }
                 Text(policy == .off
-                     ? "Turn it on to keep a playable copy of what happens in your tabs, with every command marked on the timeline."
-                     : "New tabs are recorded from when they connect. Recordings stay on this Mac, only you can read them, and they go after \(Recordings.keepDays) days.")
+                     ? "Press Record at the bottom of a tab (⌥⌘R) to start, and Stop when you're done. Recordings stay on this Mac and go after \(Recordings.keepDays) days; export the ones to keep as a video."
+                     : "New tabs on those hosts record from when they connect; Stop at the bottom of the tab ends it. Recordings stay on this Mac and go after \(Recordings.keepDays) days.")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
@@ -81,6 +83,7 @@ struct RecordingsView: View {
                 .padding(.horizontal, 10)
                 .frame(height: 30)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
+                ForEach(exports.jobs) { job in ExportRow(job: job) }
             }
             .padding(.horizontal, 16)
             .padding(.top, 44)
@@ -93,7 +96,10 @@ struct RecordingsView: View {
                         RecordingRow(info: info, isSelected: selection?.url == info.url, query: query)
                             .onTapGesture { selection = info }
                             .clavraContextMenu {
-                                [.item("Show in Finder", icon: "folder") { NSWorkspace.shared.activateFileViewerSelecting([info.url]) },
+                                [.item("Export Video (MP4)…", icon: "film") { Exporting.video(of: info, skipPauses: true) },
+                                 .item("Export Recording (.cast)…", icon: "doc") { Exporting.cast(of: info) },
+                                 .divider("export"),
+                                 .item("Show in Finder", icon: "folder") { NSWorkspace.shared.activateFileViewerSelecting([info.url]) },
                                  .divider("delete"),
                                  .item("Delete", icon: "trash", tint: Theme.color(for: .production)) { delete(info) }]
                             }
@@ -114,22 +120,22 @@ struct RecordingsView: View {
     private var emptyGuide: some View {
         let covered = model.store.hosts.filter { !$0.isGitRemote && Recordings.records($0) }
         let whom: String = switch policy {
-        case .off: "Recording is off. Pick Every host, or Hosts that ask before risky commands, at the top left."
-        case .all: "Every host is recorded."
+        case .off: "Nothing records on its own. Press Record at the bottom of a tab (or ⌥⌘R) when you want to keep what happens next."
+        case .all: "Every host records from when its tab connects."
         case .production:
             covered.isEmpty
-                ? "None of your hosts asks before risky commands yet, so nothing gets recorded. Turn on Ask before risky commands in a host's settings, or pick Every host at the top left."
-                : "Recorded: \(covered.prefix(4).map(\.title).joined(separator: ", "))\(covered.count > 4 ? " and \(covered.count - 4) more" : ""). Hosts in Production, or with Ask before risky commands on."
+                ? "None of your hosts asks before risky commands yet, so none records on its own. Press Record at the bottom of a tab (⌥⌘R) to record it anyway."
+                : "Recording on their own: \(covered.prefix(4).map(\.title).joined(separator: ", "))\(covered.count > 4 ? " and \(covered.count - 4) more" : ""). Any other tab records when you press Record."
         }
         return VStack(alignment: .leading, spacing: 14) {
             Image(systemName: "record.circle").font(.system(size: 26)).foregroundStyle(Theme.tertiary)
             Text("Nothing recorded yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
             Text(whom).font(.system(size: 12.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 8) {
-                step("1", "Open a tab to a recorded host. A red “rec” shows in its bar while it records. Tabs already open aren't recorded; open them again.")
+                step("1", "Press Record at the bottom of a tab. A red dot and a clock show while it records.")
                 step("2", "Work as usual. Every command you run is marked on the timeline.")
-                step("3", "It shows up here as it records. When the tab closes, secrets in it are hidden, if Hide secrets is on.")
-                step("4", "Click it to play it back, drag to scrub, or click a command to jump to it. Search finds hosts and commands.")
+                step("3", "Press Stop. The recording shows up here, with passwords and tokens hidden when Hide secrets is on.")
+                step("4", "Play it back, drag to scrub, or click a command to jump to it. Export saves it as an MP4 video wherever you choose.")
             }
         }
         .frame(maxWidth: 420, alignment: .leading)
@@ -311,6 +317,21 @@ private struct PlayerView: View {
             .padding(.horizontal, 10)
             .frame(height: 28)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.card))
+            MenuButton(minWidth: 200, alignRight: true) {
+                [.item("Video (MP4)…", icon: "film") { Exporting.video(of: info, skipPauses: player?.skipsPauses ?? true) },
+                 .item("Recording (.cast)…", icon: "doc") { Exporting.cast(of: info) }]
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 11, weight: .medium))
+                    Text("Export").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 10).frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.card))
+                .contentShape(Rectangle())
+            }
+            .fixedSize()
+            .help("Save as a video, or as the .cast file asciinema plays")
             Button { NSWorkspace.shared.activateFileViewerSelecting([info.url]) } label: { Image(systemName: "folder") }
                 .buttonStyle(.plain).foregroundStyle(Theme.secondary).help("Show the .cast file in Finder (asciinema can play it too)")
             Button(action: delete) { Image(systemName: "trash") }
@@ -564,5 +585,96 @@ final class ReplayHost: NSView {
         var frame = terminal.getOptimalFrameSize()
         frame.origin = CGPoint(x: max((bounds.width - frame.width) / 2, 0), y: max(bounds.height - frame.height, 0))
         if terminal.frame != frame { terminal.frame = frame }
+    }
+}
+
+/// Where exports go: a save panel that starts in the folder used last, or Downloads.
+@MainActor
+enum Exporting {
+    private static var folder: URL {
+        get {
+            UserDefaults.standard.url(forKey: "ExportFolder")
+                ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "ExportFolder") }
+    }
+
+    static func name(for info: Recordings.Info, extension ext: String) -> String {
+        let host = (info.host.isEmpty ? info.title : info.host)
+            .components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: "-")
+        let stamp = info.started.formatted(.iso8601.year().month().day().dateSeparator(.dash).time(includingFractionalSeconds: false).timeSeparator(.omitted))
+        return "\(host) \(stamp.replacingOccurrences(of: "T", with: " ")).\(ext)"
+    }
+
+    private static func ask(_ name: String, type: UTType, title: String) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = title
+        panel.nameFieldStringValue = name
+        panel.directoryURL = folder
+        panel.allowedContentTypes = [type]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        folder = url.deletingLastPathComponent()
+        return url
+    }
+
+    static func video(of info: Recordings.Info, skipPauses: Bool) {
+        guard let url = ask(name(for: info, extension: "mp4"), type: .mpeg4Movie, title: "Export Video") else { return }
+        VideoExports.shared.start(recording: info.url, to: url, skipPauses: skipPauses)
+    }
+
+    /// The .cast file, with its secrets hidden when Hide secrets is on.
+    static func cast(of info: Recordings.Info) {
+        guard let url = ask(name(for: info, extension: "cast"), type: UTType(filenameExtension: "cast") ?? .data, title: "Export Recording") else { return }
+        let source = info.url
+        Task.detached(priority: .userInitiated) {
+            try? FileManager.default.removeItem(at: url)
+            guard (try? FileManager.default.copyItem(at: source, to: url)) != nil else { return }
+            if Redaction.isOn { Redaction.apply(to: url) }
+        }
+    }
+}
+
+/// A video being made, or just made: how far it is, and where it went.
+private struct ExportRow: View {
+    var job: VideoExports.Job
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "film").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(job.name).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1).truncationMode(.middle)
+                switch job.state {
+                case .running(let fraction):
+                    ProgressView(value: fraction).progressViewStyle(.linear).controlSize(.mini).tint(Theme.brass)
+                case .done:
+                    Text("Saved in \(job.url.deletingLastPathComponent().lastPathComponent)").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                case .failed(let reason):
+                    Text(reason).font(.system(size: 11)).foregroundStyle(Theme.color(for: .production)).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 4)
+            switch job.state {
+            case .running:
+                small("xmark", help: "Stop exporting") { VideoExports.shared.cancel(job.id) }
+            case .done:
+                small("magnifyingglass", help: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([job.url]) }
+                small("play.fill", help: "Open the video") { NSWorkspace.shared.open(job.url) }
+                small("xmark", help: "Hide") { VideoExports.shared.dismiss(job.id) }
+            case .failed:
+                small("xmark", help: "Hide") { VideoExports.shared.dismiss(job.id) }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.card))
+    }
+
+    private func small(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.secondary)
+                .frame(width: 20, height: 20).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }

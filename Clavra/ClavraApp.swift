@@ -61,6 +61,12 @@ struct ClavraApp: App {
                 Divider()
                 Button("Reconnect") { model.current?.connect() }
                     .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.current == nil || model.current?.isLive == true)
+                Button(model.current?.isRecording == true ? "Stop Recording" : "Start Recording") {
+                    guard let session = model.current else { return }
+                    session.isRecording ? session.finishRecording() : session.startRecording()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+                .disabled(model.current.map { !$0.isLive && !$0.isRecording } ?? true)
                 Button("Duplicate Tab") { if let s = model.current { model.open(s.server, through: s.jumpServer) } }
                     .keyboardShortcut("t", modifiers: [.command, .option]).disabled(model.current == nil)
                 Divider()
@@ -178,6 +184,20 @@ struct RootView: View {
             DispatchQueue.main.async {
                 guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
                 window.setFrame(NSRect(x: 36, y: 36, width: size[0], height: size[1]), display: true)
+            }
+        }
+        // `-ClavraExportVideo in.cast|out.mp4` makes a video and prints CLAVRA_EXPORTED when done.
+        if let pair = UserDefaults.standard.string(forKey: "ClavraExportVideo")?.split(separator: "|"), pair.count == 2 {
+            let source = URL(fileURLWithPath: String(pair[0])), out = URL(fileURLWithPath: String(pair[1]))
+            VideoExports.shared.start(recording: source, to: out, skipPauses: true)
+            Task {
+                while case .running = VideoExports.shared.jobs.first?.state { try? await Task.sleep(for: .milliseconds(100)) }
+                switch VideoExports.shared.jobs.first?.state {
+                case .done: print("CLAVRA_EXPORTED ok")
+                case .failed(let reason): print("CLAVRA_EXPORTED failed \(reason)")
+                default: print("CLAVRA_EXPORTED none")
+                }
+                fflush(stdout)
             }
         }
         // `-ClavraOpenSaved api-prod,web-staging` opens saved hosts by name, a tab each.

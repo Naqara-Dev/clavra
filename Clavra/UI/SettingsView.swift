@@ -148,7 +148,7 @@ private struct TerminalSettings: View {
                 Toggle("Hide passwords, tokens and keys in recordings", isOn: $redact).toggleStyle(.checkbox)
                     .font(.system(size: 12.5))
                     .onChange(of: redact) { Redaction.isOn = redact }
-                Text("A playable copy of each tab, with every command marked on the timeline, in Recordings (⌥⌘4). Kept on this Mac only, readable only by you, removed after \(Recordings.keepDays) days. Files are asciinema .cast files.")
+                Text("Press Record at the bottom of a tab (⌥⌘R) to record it, or have some hosts record on their own. Play them back in Recordings (⌥⌘4), and export any as an MP4. Kept on this Mac only, readable only by you, removed after \(Recordings.keepDays) days.")
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.top, 6)
