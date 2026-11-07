@@ -14,6 +14,7 @@
   <img alt="macOS 15+" src="https://img.shields.io/badge/macOS-15%2B-3D7BF7">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138">
   <img alt="Free" src="https://img.shields.io/badge/price-free-D8B46C">
+  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-A9B8FF">
   <img alt="No tracking" src="https://img.shields.io/badge/tracking-none-32D583">
 </p>
 
@@ -109,3 +110,7 @@ Xcode 26 or later. Releases, the test harness, debug launch arguments, dependenc
 ## Contributing
 
 Bug reports and ideas are welcome in [Issues](https://github.com/Naqara-Dev/clavra/issues). Clavra is made by [Naqara Dev.](https://naqara.dev), a small studio in Indonesia.
+
+## License
+
+[MIT](LICENSE). Pull requests are welcome too. The packages Clavra builds on are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
